@@ -1,0 +1,37 @@
+# Compiled binaries / build output
+/pchat
+/pchat-dev
+/bin/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Test & coverage artifacts
+coverage.out
+coverage.html
+*.cover
+profile.out
+cpu.prof
+mem.prof
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Source docs archive (contents extracted into docs/)
+pchat-docs.zip
+
+# Editor / OS cruft
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.log

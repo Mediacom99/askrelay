@@ -1,0 +1,33 @@
+# golangci-lint configuration (schema v2).
+# Run via `make lint` (golangci-lint run) and in CI.
+version: "2"
+
+run:
+  # Build tag for the dev-only instrumentation files (pchat-architecture.md §15).
+  # The `tools` tag is deliberately NOT enabled: cmd/pchat/tools.go is only a
+  # dependency-pin anchor, not code we want to type-check or lint.
+  build-tags:
+    - dev
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - revive
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - std-error-handling
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Mediacom99/pchat
