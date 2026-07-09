@@ -168,3 +168,9 @@ CI (`.github/workflows/ci.yml`) runs build, vet, test, and golangci-lint on push
   verdicts live here), risk register, session protocol + kickoff prompt.
 - [`docs/pchat-launch-checklist.md`](docs/pchat-launch-checklist.md) — launch checklist
   (reference).
+- [`docs/pchat-overview.html`](docs/pchat-overview.html) — the maintainer's
+  single-page, self-contained reading copy of all the docs above (open locally in a
+  browser). **Generated — never edit by hand.** After editing ANY markdown doc in
+  this list (or README.md / this file), run `make overview` and commit the
+  regenerated HTML in the same commit. Generator: `docs/tools/build-overview.py`
+  (stdlib-only; renders via the vendored `docs/tools/marked.min.js`).

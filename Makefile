@@ -34,3 +34,8 @@ tidy:
 .PHONY: lint
 lint:
 	golangci-lint run
+
+## overview: regenerate docs/pchat-overview.html from the markdown docs
+.PHONY: overview
+overview:
+	python3 docs/tools/build-overview.py
