@@ -3,9 +3,8 @@
 version: "2"
 
 run:
-  # Build tag for the dev-only instrumentation files (pchat-architecture.md §15).
-  # The `tools` tag is deliberately NOT enabled: cmd/pchat/tools.go is only a
-  # dependency-pin anchor, not code we want to type-check or lint.
+  # Build tag for the dev-only instrumentation files (logging, metrics, debug
+  # commands) that will live behind `//go:build dev` per pchat-architecture.md §15.
   build-tags:
     - dev
 

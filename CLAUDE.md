@@ -18,8 +18,9 @@ before implementing — this file is a map, not a replacement.
 
 **Scaffolded only.** Every file under `internal/` and `cmd/` is a placeholder
 (package declaration + TODO citing the architecture section). No business logic exists
-yet. `cmd/pchat/tools.go` is a build-tagged dependency anchor (tag `tools`) that keeps
-the core libraries in `go.mod` until real code imports them — delete it once they are.
+yet, and no third-party code is imported yet, so `go.mod` intentionally lists **no
+dependencies** — they are added as each build-order step first imports them (see
+"Planned dependencies" below). `go.sum` is empty for the same reason.
 
 **Next step:** implement `internal/identity` (build order step 1 — pure logic, no
 networking, easy to test standalone). Do not start implementation until the human
@@ -87,21 +88,44 @@ Work outward from pure logic to I/O — **identity → protocol → networking �
 - **v2+ is out of scope** (§9) but leave hooks open (PoW as a pubsub validator, Tor as
   an alternate transport, pluggable renderer for widgets).
 
-## Dependency notes
+## Planned dependencies
 
-- **Rendezvous library is a maintained fork.** The spec (§3) names
-  `github.com/libp2p/go-libp2p-rendezvous`, but that module is **dead upstream** — its
-  `master` branch was stripped of all Go code, and `@latest` resolves to a commit with
-  no importable package; the only real implementation left is 2019 pre-modules code on
-  an `implement-spec` branch that needs the deprecated `go-libp2p-core`. We therefore
-  depend on the actively maintained **Waku fork**
-  `github.com/waku-org/go-libp2p-rendezvous` (tracks modern go-libp2p). Treat it as the
-  drop-in replacement for the spec's named module.
-- **Import the rendezvous *client* selectively.** The fork's root package also contains
-  the server/registration side, which pulls in `mattn/go-sqlite3` (cgo). The pchat
-  *client* only needs the rendezvous client; import the narrowest package that provides
-  it so the client binary stays cgo-free and matches the "single static binary, no
-  runtime deps" goal (§8). The VPS rendezvous/relay component is separate.
+`go.mod` starts empty on purpose (see "Current status"). Add each dependency with
+`go get` at the moment the first real code imports it — do not pre-add them. The
+intended set and the versions this scaffold resolved against (2026-07) are:
+
+| Library | Module | Version (as of scaffold) | Enters at build step |
+| --- | --- | --- | --- |
+| libp2p host | `github.com/libp2p/go-libp2p` | v0.48.0 | 3 (`p2p/host.go`) |
+| gossipsub | `github.com/libp2p/go-libp2p-pubsub` | v0.16.0 | 4 (`p2p/room.go`) |
+| rendezvous | `github.com/waku-org/go-libp2p-rendezvous` | v0.0.0-20240110… | 4–5 (`p2p/discovery.go`) |
+| CBOR | `github.com/fxamacker/cbor/v2` | v2.9.2 | 2 (`protocol/message.go`) |
+| Bubbletea | `github.com/charmbracelet/bubbletea` | v1.3.10 | 6 (`ui/`) |
+| Lipgloss | `github.com/charmbracelet/lipgloss` | v1.1.0 | 6 (`ui/`) |
+
+Notes:
+
+- **Rendezvous uses a maintained fork, not the spec's named module.** §3 names
+  `github.com/libp2p/go-libp2p-rendezvous`, but that repo is **dead** — its `master`
+  branch was stripped of all Go code (only CI/stale-bot commits remain), so `@latest`
+  has no importable package; the only real code is a 2021-era `implement-spec` branch
+  needing the deprecated `go-libp2p-core`. go-libp2p **itself is very actively
+  maintained** (monthly releases, v0.48.0); the core protocols were consolidated into
+  that monorepo (`p2p/protocol/{identify,ping,holepunch,circuitv2,autonatv2}`), but
+  rendezvous — whose spec is still only a 2021 "Working Draft" — was never migrated and
+  its satellite repo was orphaned. The actively maintained continuation is the **Waku
+  fork** `github.com/waku-org/go-libp2p-rendezvous` (used in production by Waku/Status;
+  tracks modern go-libp2p). Use it as the drop-in replacement. NB: `go-waku-rendezvous`
+  is a *different*, spec-incompatible variant (20s TTL) — do not use that one.
+- **When wiring discovery (step 4–5), reconsider the rendezvous dependency.** It's only
+  the *primary/fast* discovery path in §3; DHT and mDNS are fallbacks that need none of
+  this. Given the stalled spec, weigh: (a) Waku fork, (b) running our own rendezvous
+  point, or (c) leaning on DHT+mDNS for v1.
+- **If we do use the fork, import the client selectively.** Its root package also
+  contains the server/registration side, which pulls in `mattn/go-sqlite3` (cgo).
+  The pchat *client* only needs the rendezvous client — import the narrowest package
+  that provides it so the client binary stays cgo-free and matches the "single static
+  binary, no runtime deps" goal (§8). The VPS rendezvous/relay component is separate.
 
 ## Common commands
 
