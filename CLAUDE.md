@@ -87,6 +87,22 @@ Work outward from pure logic to I/O — **identity → protocol → networking �
 - **v2+ is out of scope** (§9) but leave hooks open (PoW as a pubsub validator, Tor as
   an alternate transport, pluggable renderer for widgets).
 
+## Dependency notes
+
+- **Rendezvous library is a maintained fork.** The spec (§3) names
+  `github.com/libp2p/go-libp2p-rendezvous`, but that module is **dead upstream** — its
+  `master` branch was stripped of all Go code, and `@latest` resolves to a commit with
+  no importable package; the only real implementation left is 2019 pre-modules code on
+  an `implement-spec` branch that needs the deprecated `go-libp2p-core`. We therefore
+  depend on the actively maintained **Waku fork**
+  `github.com/waku-org/go-libp2p-rendezvous` (tracks modern go-libp2p). Treat it as the
+  drop-in replacement for the spec's named module.
+- **Import the rendezvous *client* selectively.** The fork's root package also contains
+  the server/registration side, which pulls in `mattn/go-sqlite3` (cgo). The pchat
+  *client* only needs the rendezvous client; import the narrowest package that provides
+  it so the client binary stays cgo-free and matches the "single static binary, no
+  runtime deps" goal (§8). The VPS rendezvous/relay component is separate.
+
 ## Common commands
 
 Run via the Makefile (`make help` lists targets):
