@@ -14,9 +14,10 @@ and nothing ever touches disk.
 - **Rooms are just passphrases** — `topic_id = SHA-256(room_passphrase)`. No passphrase,
   no way to find or join a room.
 
-> **Status: scaffolded only.** This repository currently contains the project structure,
-> tooling, and placeholder packages — **no functionality is implemented yet.** See
-> [`CLAUDE.md`](CLAUDE.md) for the build plan; `internal/identity` is the next step.
+> **Status: scaffolded + planned.** This repository currently contains the project
+> structure, tooling, and placeholder packages — **no functionality is implemented
+> yet.** The full v1 build plan (work packages, decisions, execution protocol) lives in
+> [`docs/pchat-implementation-plan.md`](docs/pchat-implementation-plan.md).
 
 ## Repository layout
 
@@ -91,7 +92,10 @@ local demo). Two people in the same room simply ran `pchat` with the same `--roo
 
 - [`docs/pchat-architecture.md`](docs/pchat-architecture.md) — the full architecture and
   design specification (identity, networking, wire protocol, UI, security & threat model,
-  build order). **This is the source of truth for the project.**
+  build order). **This is the source of truth for the project's design.**
+- [`docs/pchat-implementation-plan.md`](docs/pchat-implementation-plan.md) — the v1
+  implementation plan: work packages, dependency graph, decision log, risk register,
+  and the protocol every build session follows.
 - [`docs/pchat-launch-checklist.md`](docs/pchat-launch-checklist.md) — launch checklist
   and reference material.
 

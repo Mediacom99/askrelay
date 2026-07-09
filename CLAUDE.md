@@ -14,17 +14,24 @@ is a lightweight rendezvous/relay VPS that never stores anything. v1 is core cha
 [`docs/pchat-architecture.md`](docs/pchat-architecture.md).** Read the relevant section
 before implementing — this file is a map, not a replacement.
 
+**The source of truth for execution is
+[`docs/pchat-implementation-plan.md`](docs/pchat-implementation-plan.md).** It contains
+the work packages, dependency graph, decision log (with maintainer verdicts), risk
+register, and the session protocol. Where an APPROVED decision there amends the
+architecture doc, the plan wins.
+
 ## Current status
 
-**Scaffolded only.** Every file under `internal/` and `cmd/` is a placeholder
-(package declaration + TODO citing the architecture section). No business logic exists
-yet, and no third-party code is imported yet, so `go.mod` intentionally lists **no
-dependencies** — they are added as each build-order step first imports them (see
-"Planned dependencies" below). `go.sum` is empty for the same reason.
+**Scaffolded + planned; no application code yet.** Every file under `internal/` and
+`cmd/` is a placeholder (package declaration + TODO citing the architecture section).
+`go.mod` intentionally lists **no dependencies** — they are added as each work package
+first imports them, at the exact versions pinned in the plan's §3 dependency matrix.
+`go.sum` is empty for the same reason.
 
-**Next step:** implement `internal/identity` (build order step 1 — pure logic, no
-networking, easy to test standalone). Do not start implementation until the human
-confirms the scaffold.
+**Next step:** follow the implementation plan's §2 Execution protocol — pick the next
+eligible work package from its status board (dependencies DONE, gating decisions
+APPROVED), implement it, run its test plan, update its status. Do not implement
+against decisions still marked PROPOSED when the package lists them as gates.
 
 ## Repo layout (architecture §8)
 
@@ -51,18 +58,14 @@ pchat/
   README.md
 ```
 
-## Suggested build order (architecture §10)
+## Build order
 
-Work outward from pure logic to I/O — **identity → protocol → networking → UI**:
-
-1. `internal/identity` — keypair gen + glyph/color derivation (pure, testable).
-2. `internal/protocol` — Message struct, CBOR encode/decode, sign/verify.
-3. `internal/p2p/host.go` — bare libp2p host that starts and gets a peer ID.
-4. `internal/p2p/room.go` + `discovery.go` — topic derivation, mDNS, gossipsub;
-   confirm two local processes can talk.
-5. Add DHT discovery for cross-network joins.
-6. `internal/ui/` — Bubbletea shell wired to p2p (input → publish; receive → append).
-7. Polish: roster, typing indicators, ring-buffer eviction, `--debug` logging.
+The architecture's §10 ordering (identity → protocol → networking → UI) is refined
+into PR-sized work packages **WP-01 … WP-14** in the implementation plan, which also
+covers what §10 omits: the rendezvous/relay VPS daemon, the dev/prod build-tag split,
+the release pipeline, and the README/threat-model work. **Use the plan's status board
+and dependency graph — not this list — to pick work.** Recommended sequential order:
+WP-01, 02, 03, 04, 08 *(LAN-chat milestone)*, 07, 06, 05, 09, 10, 11, 12, 13, 14.
 
 ## Key architectural constraints
 
@@ -92,19 +95,31 @@ Work outward from pure logic to I/O — **identity → protocol → networking �
 
 `go.mod` starts empty on purpose (see "Current status"). Add each dependency with
 `go get` at the moment the first real code imports it — do not pre-add them. The
-intended set and the versions this scaffold resolved against (2026-07) are:
+authoritative pin list is the **implementation plan's §3 dependency matrix** (every
+entry there was verified against live sources on 2026-07-09, including compile-and-run
+proofs). Summary:
 
-| Library | Module | Version (as of scaffold) | Enters at build step |
+| Library | Module | Pin (verified 2026-07-09) | Enters at |
 | --- | --- | --- | --- |
-| libp2p host | `github.com/libp2p/go-libp2p` | v0.48.0 | 3 (`p2p/host.go`) |
-| gossipsub | `github.com/libp2p/go-libp2p-pubsub` | v0.16.0 | 4 (`p2p/room.go`) |
-| rendezvous | `github.com/waku-org/go-libp2p-rendezvous` | v0.0.0-20240110… | 4–5 (`p2p/discovery.go`) |
-| CBOR | `github.com/fxamacker/cbor/v2` | v2.9.2 | 2 (`protocol/message.go`) |
-| Bubbletea | `github.com/charmbracelet/bubbletea` | v1.3.10 | 6 (`ui/`) |
-| Lipgloss | `github.com/charmbracelet/lipgloss` | v1.1.0 | 6 (`ui/`) |
+| libp2p host | `github.com/libp2p/go-libp2p` | v0.48.0 | WP-03 (`p2p/host.go`) |
+| gossipsub | `github.com/libp2p/go-libp2p-pubsub` | v0.16.0 (v0.17.0 exists but is hours old — see plan T-32) | WP-04 (`p2p/room.go`) |
+| Kademlia DHT | `github.com/libp2p/go-libp2p-kad-dht` | v0.41.0 (requires exactly go-libp2p v0.48.0) | WP-05 |
+| rendezvous | `github.com/waku-org/go-libp2p-rendezvous` | v0.0.0-20240110193335-a67d1cc760a0 (no tags; pin the pseudo-version) | WP-06 client / WP-07 server |
+| CBOR | `github.com/fxamacker/cbor/v2` | v2.9.2 | WP-02 (`protocol/message.go`) |
+| Bubbletea | `charm.land/bubbletea/v2` | v2.0.8 | WP-08 (`ui/`) |
+| Bubbles (viewport, textinput) | `charm.land/bubbles/v2` | v2.1.1 | WP-08 (`ui/`) |
+| Lipgloss | `charm.land/lipgloss/v2` | v2.0.5 | WP-08 (`ui/`) |
+| terminal (hidden passphrase prompt) | `golang.org/x/term` | latest at import | WP-08 (`cmd/pchat`) |
+| Prometheus client (**dev builds only**) | `github.com/prometheus/client_golang` | latest at import | WP-11 (`internal/devtools`) |
 
 Notes:
 
+- **Charm stack is the v2 line at `charm.land/*` vanity paths** (plan decision T-31).
+  The Charm libraries went v2-stable 2026-02-24 under new import paths — do **not**
+  use `github.com/charmbracelet/bubbletea` (frozen v1 line, previously pinned here) or
+  `github.com/charmbracelet/*/v2` (stale path — mixing it with `charm.land` compiles
+  two incompatible copies of bubbletea). Bubbletea ≥ v2.0.7 is required (Windows
+  resize regression fixed there).
 - **Rendezvous uses a maintained fork, not the spec's named module.** §3 names
   `github.com/libp2p/go-libp2p-rendezvous`, but that repo is **dead** — its `master`
   branch was stripped of all Go code (only CI/stale-bot commits remain), so `@latest`
@@ -114,18 +129,23 @@ Notes:
   that monorepo (`p2p/protocol/{identify,ping,holepunch,circuitv2,autonatv2}`), but
   rendezvous — whose spec is still only a 2021 "Working Draft" — was never migrated and
   its satellite repo was orphaned. The actively maintained continuation is the **Waku
-  fork** `github.com/waku-org/go-libp2p-rendezvous` (used in production by Waku/Status;
-  tracks modern go-libp2p). Use it as the drop-in replacement. NB: `go-waku-rendezvous`
-  is a *different*, spec-incompatible variant (20s TTL) — do not use that one.
-- **When wiring discovery (step 4–5), reconsider the rendezvous dependency.** It's only
-  the *primary/fast* discovery path in §3; DHT and mDNS are fallbacks that need none of
-  this. Given the stalled spec, weigh: (a) Waku fork, (b) running our own rendezvous
-  point, or (c) leaning on DHT+mDNS for v1.
-- **If we do use the fork, import the client selectively.** Its root package also
-  contains the server/registration side, which pulls in `mattn/go-sqlite3` (cgo).
-  The pchat *client* only needs the rendezvous client — import the narrowest package
-  that provides it so the client binary stays cgo-free and matches the "single static
-  binary, no runtime deps" goal (§8). The VPS rendezvous/relay component is separate.
+  fork** `github.com/waku-org/go-libp2p-rendezvous` (used in production by Waku/Status).
+  NB: `go-waku-rendezvous` is a *different*, spec-incompatible variant (20s TTL) — do
+  not use that one.
+- **The fork's root package is cgo-free — import it directly.** An earlier note here
+  claimed the root package pulls in `mattn/go-sqlite3` (cgo); that was **verified
+  wrong** on 2026-07-09 (`go list -deps` shows no sqlite, no `database/sql`; the whole
+  client+server built and ran with `CGO_ENABLED=0` against go-libp2p v0.48.0). The cgo
+  sqlite/sqlcipher drivers live in the `db/sqlite` / `db/sqlcipher` subpackages —
+  simply never import those. The VPS daemon uses a hand-written in-memory
+  implementation of the fork's storage interface (plan WP-07).
+- **Fork risk is pre-decided.** If the fork ever fails the WP-06 opening spike, the
+  pre-approved contingency in plan decision T-12 applies (v1 ships DHT+mDNS discovery;
+  VPS stays relay-only) — no session should stall on this.
+- **Never add `replace` directives to go.mod** — they break
+  `go install github.com/Mediacom99/pchat/cmd/pchat@latest` (verified; the launch
+  checklist depends on that path). The fork resolves under its own module path and
+  needs none.
 
 ## Common commands
 
@@ -141,7 +161,10 @@ CI (`.github/workflows/ci.yml`) runs build, vet, test, and golangci-lint on push
 
 ## Documentation
 
-- [`docs/pchat-architecture.md`](docs/pchat-architecture.md) — **source of truth** for
-  architecture, wire protocol, security model, and build order.
+- [`docs/pchat-architecture.md`](docs/pchat-architecture.md) — **source of truth for
+  design intent**: architecture, wire protocol, security model.
+- [`docs/pchat-implementation-plan.md`](docs/pchat-implementation-plan.md) — **source
+  of truth for execution**: work packages, dependency graph, decision log (maintainer
+  verdicts live here), risk register, session protocol + kickoff prompt.
 - [`docs/pchat-launch-checklist.md`](docs/pchat-launch-checklist.md) — launch checklist
   (reference).
