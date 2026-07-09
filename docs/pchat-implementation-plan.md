@@ -43,11 +43,14 @@ session discovers an impediment). Only one package `IN_PROGRESS` at a time unles
 
 ### Decisions (summary — full entries in §5)
 
-All technical decisions **T-01…T-33** and product decisions **P-01…P-08** are
-**PROPOSED** as of 2026-07-09 and await maintainer verdicts, except where noted.
+**Maintainer verdict 2026-07-09: ALL entries — T-01…T-33 and P-01…P-08 — are
+APPROVED.** (T-01, T-25, T-31, P-01 were reviewed individually; the remainder were
+approved in bulk. See the verdict block at the top of §5.) Every package's decision
+gates are therefore satisfied; work is unblocked per the dependency graph.
 Decision status lifecycle: `PROPOSED → APPROVED | VETOED | REVISED` (an entry is never
 deleted; verdicts are appended with a date). A `VETOED` decision blocks every package
-that lists it as a gate until a `REVISED` replacement is APPROVED.
+that lists it as a gate until a `REVISED` replacement is APPROVED. New decisions
+raised by future sessions start at PROPOSED individually.
 
 ---
 
@@ -170,6 +173,14 @@ WP-07 pchat-point (independent; memstore) ────────────�
 Format: each entry has **PROPOSED** (the decision), **Rationale**, and **Reversal
 cost**. Verdicts are appended, never rewritten. Technical (T-xx) and product (P-xx)
 entries are separated so they can be vetoed independently.
+
+> **VERDICTS — 2026-07-09 (maintainer, Edoardo Bertoli):** every entry below,
+> **T-01 through T-33 and P-01 through P-08, is APPROVED.** T-01 (drop custom
+> signing), T-25 (prod `--debug` diagnostics), T-31 (Charm v2 stack), and P-01
+> (commons room, passphrase `pchat-commons`) were reviewed and approved
+> individually; all remaining entries were approved in bulk. The `PROPOSED:` label
+> inside each entry below marks the proposal text, not a pending status — this
+> block is the authoritative status record for the 2026-07-09 set.
 
 **Spec-coverage map** (every §11/§12/§13 item → where it is resolved):
 
@@ -1787,4 +1798,5 @@ advised:
 ---
 
 *Plan authored 2026-07-09 against `docs/pchat-architecture.md` (as committed) and
-live-verified library sources. Maintainer verdicts pending on all decisions.*
+live-verified library sources. All 2026-07-09 decisions APPROVED by the maintainer
+the same day (see §5 verdict block); WP-01 is the next eligible package.*
