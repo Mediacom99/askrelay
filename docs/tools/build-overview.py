@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate docs/pchat-overview.html — the maintainer's single-page reading
+"""Regenerate docs/askrelay-overview.html — the maintainer's single-page reading
 copy of every project document.
 
 Self-contained output: all markdown is embedded, rendered client-side by a
@@ -17,14 +17,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "docs" / "pchat-overview.html"
+OUT = ROOT / "docs" / "askrelay-overview.html"
 MARKED = Path(__file__).resolve().parent / "marked.min.js"
 
 # (key, tab title, path). Order = sidebar order. Default tab = first entry.
 DOCS = [
-    ("plan", "Implementation plan", "docs/pchat-implementation-plan.md"),
-    ("arch", "Architecture", "docs/pchat-architecture.md"),
-    ("launch", "Launch checklist", "docs/pchat-launch-checklist.md"),
+    ("plan", "Implementation plan", "docs/askrelay-implementation-plan.md"),
+    ("arch", "Architecture", "docs/askrelay-architecture.md"),
+    ("launch", "Launch checklist", "docs/askrelay-launch-checklist.md"),
+    ("decisions", "Decision log", "docs/phase2-decision-log.md"),
     ("readme", "README", "README.md"),
     ("claude", "CLAUDE.md", "CLAUDE.md"),
 ]
@@ -72,7 +73,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pchat — project overview</title>
+<title>askrelay — project overview</title>
 <style>
   :root {
     --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --border: #d1d9e0;
@@ -167,7 +168,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <body>
 <button id="menu-btn">☰ docs</button>
 <nav id="nav">
-  <div class="brand">pchat — overview</div>
+  <div class="brand">askrelay — overview</div>
   <div class="meta">generated __GENERATED__ · commit <code>__COMMIT__</code><br>
   regenerate: <code>make overview</code></div>
   <div class="tabs" id="tabs"></div>
@@ -181,7 +182,7 @@ TEMPLATE = r"""<!DOCTYPE html>
 <script>
 (function () {
   const DOCS = JSON.parse(document.getElementById('docs-data').textContent);
-  const byFile = {};   // "pchat-architecture.md" -> key
+  const byFile = {};   // "askrelay-architecture.md" -> key
   DOCS.forEach(d => { byFile[d.file.split('/').pop().toLowerCase()] = d.key; });
 
   // --- GitHub-compatible heading slugs (must match the anchors used in the docs)
@@ -291,10 +292,10 @@ TEMPLATE = r"""<!DOCTYPE html>
     const r = document.documentElement;
     const dark = (r.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
     r.dataset.theme = dark ? 'light' : 'dark';
-    try { localStorage.setItem('pchat-theme', r.dataset.theme); } catch (e) {}
+    try { localStorage.setItem('askrelay-theme', r.dataset.theme); } catch (e) {}
   });
   try {
-    const saved = localStorage.getItem('pchat-theme');
+    const saved = localStorage.getItem('askrelay-theme');
     if (saved) document.documentElement.dataset.theme = saved;
   } catch (e) {}
 })();

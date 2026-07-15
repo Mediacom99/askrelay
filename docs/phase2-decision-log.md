@@ -228,9 +228,11 @@ first-use; a bad-faith filing by a third party would force a rename or a dispute
 **Decision:** The project is named **askrelay**: repo `Mediacom99/askrelay` (per
 D-14, personal account now; the free `askrelay` GitHub org gets claimed at the
 D-14 migration moment), binary `askrelay`, npm wrapper `askrelay`, module path
-`github.com/Mediacom99/askrelay`, domains from `.dev/.io/.sh` (registrar
-confirmation on the checklist; `.com` is squatter-parked since 2026-07-02 —
-ignore or negotiate later).
+`github.com/Mediacom99/askrelay`, domains from `.dev/.io/.sh` (`.com` is
+squatter-parked since 2026-07-02 — ignore or negotiate later).
+
+**Status update 2026-07-16:** maintainer purchased and owns **askrelay.dev** —
+the registrar-confirmation caveat is closed.
 
 **Process:** 18 candidates from three naming philosophies, each collision-checked
 live (GitHub, npm, domains, existing products, trademark web knockout); 10 viable,

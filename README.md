@@ -1,109 +1,39 @@
-# pchat
+# askrelay
 
-A terminal-only, fully peer-to-peer, **ephemeral** chat tool for developers and internet
-weirdos. No servers, no accounts, no logs — you exist in a room only while you're in it,
-and nothing ever touches disk.
+**Your AI can ask my AI.**
 
-- **Ephemeral by default** — no history, no logs, no saved identity. Quitting loses
-  everything, on purpose.
-- **No central server** — rooms live only as long as a peer holding them is online.
-  Messaging fans out over [libp2p](https://libp2p.io/) gossipsub.
-- **Anonymous but distinguishable identity** — a fresh Ed25519 keypair per launch,
-  rendered as a deterministic **glyph + color** signature. No nicknames — recognition is
-  purely visual.
-- **Rooms are just passphrases** — `topic_id = SHA-256(room_passphrase)`. No passphrase,
-  no way to find or join a room.
+Async, approval-gated messaging between your team's AI sessions — Claude Code,
+Claude, ChatGPT, Codex. Your Claude Code session sends a question to a
+colleague; your colleague approves; their AI answers with its own context. No
+human copy-paste in between.
 
-> **Status: scaffolded + planned.** This repository currently contains the project
-> structure, tooling, and placeholder packages — **no functionality is implemented
-> yet.** The full v1 build plan (work packages, decisions, execution protocol) lives in
-> [`docs/pchat-implementation-plan.md`](docs/pchat-implementation-plan.md).
+> **Status: pre-implementation.** The design is fully decided and evidence-backed;
+> the architecture and implementation-plan documents are being written now, and
+> code follows them. Nothing is runnable yet.
+>
+> - [Decision log](docs/phase2-decision-log.md) — every design decision, with verdicts
+> - [Research briefs](docs/research/README.md) — the live-verified evidence behind them
 
-## Repository layout
+## What it will be
 
-```
-pchat/
-  cmd/pchat/
-    main.go              # CLI entry, flag parsing, wires everything together
-  internal/
-    p2p/
-      host.go            # libp2p host setup, transports, NAT config
-      discovery.go       # mDNS + DHT peer discovery
-      room.go            # topic derivation, gossipsub join/leave
-    protocol/
-      message.go         # Message struct, CBOR encode/decode
-      sign.go            # sign/verify helpers
-    identity/
-      identity.go        # keypair gen, glyph+color derivation
-    ui/
-      model.go           # Bubbletea root model
-      room_view.go       # scrollback rendering
-      input.go           # input bar component
-      roster.go          # presence sidebar
-  docs/                  # architecture spec + launch checklist
-  go.mod
-  README.md
-```
-
-## Build & run
-
-Requires **Go 1.23+** (developed against Go 1.26). Common tasks go through the
-[`Makefile`](Makefile) — run `make help` to list targets:
-
-```sh
-make build                 # compile the ./pchat binary
-make run ARGS="--room foo"  # build and run (see planned flags below)
-make test                  # go test ./...
-make tidy                  # go mod tidy
-make lint                  # golangci-lint run
-```
-
-Or directly:
-
-```sh
-go build -o pchat ./cmd/pchat
-./pchat --room "some passphrase"
-```
-
-### Planned CLI (v1, not yet implemented)
-
-```
-pchat --room "some passphrase"   # required: derives the room topic
-      [--ring-size 200]          # in-memory scrollback size
-      [--relay-only]             # force relay, skip hole punching (debug)
-      [--debug]                  # verbose logging to stderr only, never to disk
-```
-
-Identity is always fresh per launch — there are no identity or nickname flags by design.
-
-### Sharing a room
-
-The passphrase **is** the entire join mechanism, and sharing it is out-of-band by
-design — send it however you'd send a Discord invite link (DM, pasted in chat, QR for a
-local demo). Two people in the same room simply ran `pchat` with the same `--room` value.
-
-> ⚠️ **Privacy note:** treat the passphrase like an invite link, not a password. Weak or
-> common passphrases are effectively public rooms, and peer **IP addresses can be exposed**
-> to anyone who knows or guesses the passphrase (via DHT lookups). Message *content* stays
-> end-to-end encrypted, but network metadata does not. See the threat model in the docs
-> below before using pchat for anything sensitive.
-
-## Documentation
-
-- [`docs/pchat-architecture.md`](docs/pchat-architecture.md) — the full architecture and
-  design specification (identity, networking, wire protocol, UI, security & threat model,
-  build order). **This is the source of truth for the project's design.**
-- [`docs/pchat-implementation-plan.md`](docs/pchat-implementation-plan.md) — the v1
-  implementation plan: work packages, dependency graph, decision log, risk register,
-  and the protocol every build session follows.
-- [`docs/pchat-launch-checklist.md`](docs/pchat-launch-checklist.md) — launch checklist
-  and reference material.
-
-## Contributing & security
-
-- Development conventions and the build order live in [`CLAUDE.md`](CLAUDE.md).
-- Security policy and how to report vulnerabilities: [`SECURITY.md`](SECURITY.md).
+- **An async mailbox, not a chat room.** You address a *person*, not a machine.
+  Messages land in a durable per-person inbox on a small relay and surface in
+  whatever AI session that person attaches. Delivery is honest per client:
+  instant push where the platform allows it (Claude Code), on next prompt where
+  it doesn't (claude.ai, ChatGPT).
+- **Human approval in both directions.** Inbound messages are untrusted data
+  until the recipient approves them; outgoing AI-drafted replies are reviewed
+  before they leave. Per-thread grants (revocable, logged) keep multi-turn
+  exchanges fluid.
+- **A thin, self-hostable Go relay** — single binary + SQLite — that speaks MCP
+  directly, so claude.ai and ChatGPT connect with zero local install. An
+  optional local daemon upgrades Claude Code with push and in-terminal
+  approvals.
+- **Security as a headline feature, not a caveat**: signed sender identity,
+  spotlighting of inbound content, no auto-fetching of links or images from
+  messages, built-in secret redaction, ephemeral relay retention. The threat
+  model ships with the docs.
 
 ## License
 
-[MIT](LICENSE) © 2026 Mediacom99
+Apache-2.0. Contributions will be accepted under DCO sign-off; there is no CLA.

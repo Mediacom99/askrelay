@@ -1,6 +1,6 @@
 # Compiled binaries / build output
-/pchat
-/pchat-dev
+/askrelay
+/askrelay-dev
 /bin/
 /dist/
 *.exe
@@ -23,9 +23,6 @@ mem.prof
 .env.*
 !.env.example
 
-# Source docs archive (contents extracted into docs/)
-pchat-docs.zip
-
 # Editor / OS cruft
 .DS_Store
 Thumbs.db
@@ -35,3 +32,8 @@ Thumbs.db
 .idea/
 .vscode/
 *.log
+
+# Session-local material (never tracked)
+/prompts/
+.claude/memory/
+.claude/settings.local.json

@@ -3,8 +3,8 @@
 version: "2"
 
 run:
-  # Build tag for the dev-only instrumentation files (logging, metrics, debug
-  # commands) that will live behind `//go:build dev` per pchat-architecture.md §15.
+  # Build tag for dev-only instrumentation files (logging, metrics, debug
+  # commands) kept behind `//go:build dev` so they never ship in prod builds.
   build-tags:
     - dev
 
@@ -29,4 +29,4 @@ formatters:
   settings:
     goimports:
       local-prefixes:
-        - github.com/Mediacom99/pchat
+        - github.com/Mediacom99/askrelay

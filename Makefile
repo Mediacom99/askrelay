@@ -1,21 +1,21 @@
-BINARY := pchat
+BINARY := askrelay
 PKG := ./...
-CMD := ./cmd/pchat
+CMD := ./cmd/askrelay
 
 .DEFAULT_GOAL := help
 
 ## help: show this help
 .PHONY: help
 help:
-	@echo "pchat — available make targets:"
+	@echo "askrelay — available make targets:"
 	@grep -E '^## ' $(MAKEFILE_LIST) | sed 's/## /  /'
 
-## build: compile the pchat binary
+## build: compile the askrelay binary
 .PHONY: build
 build:
 	go build -o $(BINARY) $(CMD)
 
-## run: build and run pchat (pass args with ARGS="--room foo")
+## run: build and run askrelay (pass args with ARGS="--help")
 .PHONY: run
 run:
 	go run $(CMD) $(ARGS)
@@ -35,7 +35,7 @@ tidy:
 lint:
 	golangci-lint run
 
-## overview: regenerate docs/pchat-overview.html from the markdown docs
+## overview: regenerate docs/askrelay-overview.html from the markdown docs
 .PHONY: overview
 overview:
 	python3 docs/tools/build-overview.py
