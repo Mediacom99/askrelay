@@ -42,8 +42,9 @@ Spikes (timeboxed, produce a Learnings entry + possibly decision revisions):
 ### Decisions (summary — full entries in §5)
 
 Product D-01..D-18: all APPROVED (see phase2-decision-log.md). Technical
-T-01..T-15: recorded below as **PROPOSED** pending maintainer verdicts; WPs
-gated on a T-entry may not start until it is APPROVED.
+T-01..T-15: all **APPROVED** (maintainer, 2026-07-16 — walked through and
+approved one by one). Future T-entries start as PROPOSED; WPs gated on a
+T-entry may not start until it is APPROVED.
 
 ## 2. Execution protocol (agent pipeline)
 
@@ -113,7 +114,7 @@ empty until each WP's first import.
 | `github.com/golang-jwt/jwt/v5` | **v5.3.1** (2026-01-28) | WP-05 | MIT. EdDSA-signed, audience-bound access tokens (T-06); pairs with go-sdk's BYO `TokenVerifier`. |
 | `github.com/google/uuid` | latest at import (verify then) | WP-01 | UUIDv7 for envelope/thread IDs (T-02). Verify tag + license at WP-01 and record here. |
 | `golang.org/x/crypto` | not needed in v1 | — | stdlib `crypto/ed25519` covers signing (arch §3). If ever imported: v0.54.0 (2026-07-08, BSD-3) was current; avoid deprecated `openpgp` (GO-2026-5932). |
-| ~~`github.com/spf13/cobra`~~ | not adopted | — | v1.10.2 healthy (Apache-2.0); not adopted per T-05 (PROPOSED — stdlib `flag` + subcommand dispatch); revisit only if verb count sprawls or T-05 is vetoed. |
+| ~~`github.com/spf13/cobra`~~ | not adopted | — | v1.10.2 healthy (Apache-2.0); not adopted per T-05 (APPROVED — stdlib `flag` + subcommand dispatch); revisit only if verb count sprawls. |
 
 Release/CI tooling (not go.mod): Go **1.26.5** (2026-07-07) toolchain;
 GoReleaser **v2.17.0** (2026-07-04, MIT); golangci-lint **v2.12.2**
@@ -157,7 +158,7 @@ reference and bind every WP.
 - **T-02 — IDs: UUIDv7 (`github.com/google/uuid`).** Time-sortable (inbox
   ordering, index locality), standard, one tiny dep. Rejected: ULID lib
   (equivalent, less standard), stdlib-only random UUIDs (no ordering).
-  *PROPOSED*
+  *APPROVED (maintainer, 2026-07-16)*
 - **T-03 — SQLite via `modernc.org/sqlite`.** Pure-Go keeps CGO_ENABLED=0 and
   trivial cross-compilation (D-09). WAL mode; single-writer discipline via a
   store-level mutex; `busy_timeout` set. *PROPOSED*
@@ -183,7 +184,7 @@ reference and bind every WP.
   hope. *PROPOSED*
 - **T-11 — Config: relay = flags + env only; daemon/user =
   `~/.config/askrelay/config.json` (0600) + key file beside it** (arch §7).
-  *PROPOSED*
+  *APPROVED (maintainer, 2026-07-16)*
 - **T-12 — Redaction v1 pattern set:** AWS access keys, GCP service-account
   JSON markers, GitHub `ghp_`/`gho_`/fine-grained `github_pat_`, Slack `xox*`,
   generic `-----BEGIN … PRIVATE KEY-----` blocks, JWT triple-dot shape, and
@@ -191,10 +192,10 @@ reference and bind every WP.
   PASSWORD)`. Visible `⟦redacted:<kind>⟧` markers; sender warned; no entropy
   heuristics (false-positive machine). Hook: executable at
   `redact_hook` config path, receives text on stdin, returns replacement.
-  *PROPOSED*
+  *APPROVED (maintainer, 2026-07-16)*
 - **T-13 — Dev/prod build split retained** (`-tags dev`: verbose tracing,
   localhost debug endpoint; prod artifacts contain neither; CI builds both).
-  *PROPOSED*
+  *APPROVED (maintainer, 2026-07-16)*
 - **T-14 — HTTP routing: stdlib `net/http` ServeMux (1.22+ method patterns).**
   No router dep. *PROPOSED*
 - **T-15 — Logging: stdlib `log/slog`, JSON handler on the relay, text on the
