@@ -245,6 +245,22 @@ peerpost (7.3); 14 others documented in naming.md.
 
 **Verdict:** APPROVED (maintainer, 2026-07-15) — explicit sign-off; gates Phase 3.
 
+## D-19 — Market verdict recorded: GO_WITH_CHANGES
+
+**Decision:** The market go/no-go research (six adversarially-verified briefs +
+three-lens judge panel, 2026-07-16, evidence in `docs/research/market-*.md`,
+synthesis in `docs/research/market-verdict.md`) returned **GO_WITH_CHANGES**
+(panel 2–1: bull 72%, base-rate 70% for; bear 60% against). The maintainer
+records the verdict and its evidence; the ten recommended changes are decided
+**individually** in a follow-up session (each adopted change gets its own
+D-entry or doc amendment; each rejected one is noted with reason). Until those
+decisions land, the verdict's two hard sequencing facts stand as advisory:
+the askmesh autopsy belongs before application code, and the kill criteria in
+market-verdict.md are the reference framing for v1 success metrics.
+
+**Verdict:** APPROVED (maintainer, 2026-07-16) — "record verdict only, decide
+changes together afterwards."
+
 ## Open action items from Phase 2 (feed the plan/checklist in Phase 4)
 
 - Ask Anthropic (channel named on their legal page) whether human-approved relay
