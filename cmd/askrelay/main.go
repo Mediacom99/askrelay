@@ -1,6 +1,6 @@
-// Command askrelay is the askrelay CLI. Implementation begins with the v1 work
-// packages once the architecture and implementation-plan docs land; until then
-// this placeholder keeps the module buildable.
+// Command askrelay is the askrelay CLI. Implementation lands per the work
+// packages in docs/askrelay-implementation-plan.md §6; this placeholder keeps
+// the module buildable until the CLI surface arrives with WP-12.
 package main
 
 func main() {}

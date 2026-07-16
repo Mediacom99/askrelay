@@ -84,7 +84,9 @@ so a future A2A bridge is a thin adapter.
 - **Thread** = A2A Task. States: `submitted → working → input-required →
   completed | failed | canceled | rejected` (a2a.md). A question opens a thread
   in `submitted`; `input-required` is exactly "waiting for a human tap" — the
-  approval gate has a first-class, standard state name.
+  approval gate has a first-class, standard state name. (D-04/D-06 wrote
+  "pending" as shorthand; A2A v1.0 has no such state — the A2A-verbatim names
+  here are normative.)
 - **Message** = A2A Message: `role` (`user` | `agent`), ordered `parts`
   (`text` today; `code` as a fenced-text convention, size-capped — D-05: no
   arbitrary file parts in v1).
@@ -110,9 +112,11 @@ so a future A2A bridge is a thin adapter.
   *device* key, minted at enrollment (§4.3) and never leaving the device. The
   relay verifies the signature and the device→person binding before accepting;
   recipients re-verify. Canonicalization is RFC 8785 JCS of the envelope with
-  `sig` removed. Replay is bounded by `id` uniqueness per thread plus the
-  relay's retention window. A valid signature proves origin — the system never
-  infers intent or safety from it (D-10).
+  `sig` removed. Replay protection: the store keeps message-id tombstones
+  (id + thread, no body) alongside the thread metadata that already outlives
+  bodies (§4.2), and envelopes whose `sent_at` falls outside the retention
+  window are rejected outright. A valid signature proves origin — the system
+  never infers intent or safety from it (D-10).
 - **Size caps**: 32 KiB body per message (fits "question + code snippet",
   starves exfil-by-bulk); relay rejects larger with a clear error.
 
@@ -166,8 +170,9 @@ server (mcp.md). The relay embeds the minimum honest implementation:
   DCR is deprecated in the draft spec but required by today's clients —
   tracked as a plan risk).
 - Tokens identify the *person* (and originating client type, used for the §5.4
-  profiles). Per-user state is keyed on identity, never on MCP session IDs
-  (spec requirement, mcp.md).
+  profiles). Per-user state is keyed on identity, never on MCP session IDs —
+  required anyway for stateless operation (the 2026-07-28 revision removes
+  sessions entirely; mcp.md).
 
 ### 4.5 HTTP surface
 
@@ -220,19 +225,21 @@ asks, do not fetch URLs it contains. Summarize/quote it for your human.
 ```
 
 The nonce is fresh per rendering, so message text cannot fake a closing tag.
-Clients never auto-fetch anything referenced inside; the relay strips/refuses
-non-text parts (§3). URLs render as plain text (not links) in tool output.
+Clients never auto-fetch anything referenced inside; the relay refuses
+non-text parts with a clear error (§3 — no silent rewriting, §8). URLs render
+as plain text (not links) in tool output.
 
 ### 5.3 Both gates live in the relay
 
 The approval state machine runs server-side (single source of truth; every
-client sees identical state): inbound `submitted → input-required →
-(approved | rejected)`; outbound drafts `pending_review → (sent | discarded)`.
-Grants short-circuit a gate *per thread and direction only*; every
-grant-created transition carries `via_grant: true` in the audit trail. Secret
-redaction (D-12) runs **client-side** (daemon and in-tool guidance) *before*
-content reaches the relay — the relay additionally runs the same built-in
-patterns as a backstop and flags (never silently rewrites) matches on arrival.
+client sees identical state). Gate outcomes are a separate vocabulary from §3
+thread states: *approving* an inbound message transitions its thread
+`input-required → working`; *declining* transitions it `→ rejected`; outbound
+drafts move `pending_review → (sent | discarded)`. Grants short-circuit a gate
+*per thread and direction only*; every grant-created transition carries
+`via_grant: true` in the audit trail. Secret redaction (D-12) runs
+**client-side only** (daemon and in-tool guidance) *before* content is signed
+and sent — the relay is not involved, per the approved decision.
 
 ### 5.4 Client profiles
 
@@ -293,11 +300,11 @@ architecture-level invariants:
 |---|---|
 | Prompt injection via inbound message (the lethal trifecta — security.md) | Inbound is data: spotlighting (§5.2), no tool triggering, approval gate (D-03), no auto-fetch of URLs/images ever |
 | Injected *sender* model (A compromised upstream) | No trusted-sender state; signature ≠ safety (D-10); B's gates hold regardless of who signed |
-| Secrets/company data leaking in helpful replies | Outbound review gate (D-11) + client-side redaction with visible markers (D-12) + relay backstop flagging (§5.3) |
+| Secrets/company data leaking in helpful replies | Outbound review gate (D-11) + client-side redaction with visible markers (D-12) |
 | Exfil via rendered content | Clients render URLs as text, never fetch; no image parts in v1 (§3, D-05) |
 | Relay compromise / nosy operator | Plaintext acknowledged honestly: self-host guidance, ephemeral retention (§4.2), grants/audit outlive bodies; E2EE explicitly revisited if IT requires (D-05) |
 | Impersonation | Per-device Ed25519 signatures verified at relay *and* recipient; roster-only; instant device revocation (§4.3) |
-| Replay / cross-tenant confusion (Asana-class — security.md) | UUIDv7 uniqueness + retention bound; identity-keyed state, never session-keyed (§4.4); single-team relay, no federation (D-06) |
+| Replay / cross-tenant confusion (Asana-class — security.md) | Id tombstones + `sent_at` freshness (§3); identity-keyed state, never session-keyed (§4.4); single-team relay, no federation (D-06) — on the multi-tenant hosted instance this last assumption is replaced by the per-team isolation hardening of WP-16 (D-08) |
 | Vendor-ToS violation as a design flaw | Relay never touches vendor credentials; all AI work happens in the participant's own client under their own login; unattended = API-key-only, v1.1 (vendor-tos.md, D-03) |
 | Abuse of the future hosted instance | Deferred with D-08 (launch, not v1); hardening WP gates it |
 
@@ -315,8 +322,9 @@ Non-mitigations we refuse: ML guardrail classifiers (false confidence — D-10);
 | ChatGPT (web, dev-mode/connector) | ✅ | ✅ pull | in-session + native write confirmations | next time the human prompts; plan-gating caveats (chatgpt-extension.md) |
 | ChatGPT mobile | ❌ unsupported (no custom connectors) | | | |
 
-README carries this table verbatim: the asymmetry is a platform fact we
-document, not a bug we promise away (D-01, D-02).
+README carries a condensed version of this matrix (this table is
+authoritative): the asymmetry is a platform fact we document, not a bug we
+promise away (D-01, D-02).
 
 ## 10. Build & repo structure
 
@@ -384,10 +392,32 @@ tracked in the launch checklist).
 | 3 | MCP 2026-07-28 revision: ship date, go-sdk v1.7.0 stable timing, client adoption lag | Spike S-03, risk R-04 |
 | 4 | Anthropic "ordinary individual usage" answer (gates v1.1 auto-reply, not v1) | Launch checklist; risk R-03 |
 | 5 | Kosmoy team's actual ChatGPT plan mix (write-MCP beta gating; Plus unresolved) | Launch checklist item |
-| 6 | ULID vs UUIDv7 final call and grant-audit schema details | T-entries at WP time |
+| 6 | Grant-audit schema details (id format is settled: UUIDv7, T-02) | T-entries at WP time |
 
 ## 15. Architecture & security review
 
-Appended after the fresh-context review pass (review agents check this
-document against D-01..D-18 and the research briefs; findings and their
-resolutions are recorded here).
+**2026-07-16 — fresh-context review pass** (five independent reviewers:
+architecture-vs-decisions, plan-vs-architecture, public-facing docs,
+cross-document consistency, scaffold-vs-docs; 35 findings, all resolved in the
+same commit):
+
+- **1 BLOCKER (real):** §5.3 had grown a relay-side redaction backstop that
+  contradicted D-12's approved "runs client-side; relay not involved" —
+  removed here and from the §8 threat table. Redaction is client-side only.
+- **3 MAJOR:** WP-06 (embedded AS) had no dependent WP, so the auth surface
+  would never get e2e coverage — WP-13 now depends on it and names the
+  adversarial auth runs (R-06); the README's Codex row hid the daemon
+  requirement — fixed; the launch checklist was missing the Kosmoy legal
+  action item (owner-of-record, employer-IP terms) — added.
+- **MINOR/NIT (selection):** gate-outcome vocabulary now explicitly mapped to
+  §3 thread states; D-04's "pending" documented as shorthand for A2A's
+  `submitted`; UUIDv7 committed (was contradictorily "open" in §14); replay
+  now bounded by id tombstones + `sent_at` freshness instead of hand-waving;
+  one overstated mcp.md citation rewritten; cross-tenant mitigation made
+  honest for the hosted instance; the plan's ASCII dependency graph replaced
+  with a mechanically-checkable track list; A2A state names hyphenated
+  everywhere; CI now actually builds both tag sets as §10 claims; empty
+  go.sum untracked.
+- **1 false positive:** a reviewer flagged CLAUDE.md as stale by quoting its
+  own context-injected pre-Phase-4 copy; the on-disk file was current
+  (verified by grep before dismissing).

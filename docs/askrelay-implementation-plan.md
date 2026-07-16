@@ -25,10 +25,10 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-10 | daemon ↔ Claude Code push (channels + hooks) | TODO | WP-09 | S-01 |
 | WP-11 | `internal/redact` — secret redaction | TODO | — | T-12 |
 | WP-12 | CLI verbs (inbox, approve, device, status) | TODO | WP-04 WP-08 | T-05 |
-| WP-13 | end-to-end harness + golden flows | TODO | WP-07 WP-08 WP-09 | — |
+| WP-13 | end-to-end harness + golden flows | TODO | WP-06 WP-07 WP-08 WP-09 | — |
 | WP-14 | packaging (Docker, GoReleaser, brew, npm wrapper) | TODO | WP-13 | T-13 |
 | WP-15 | docs & security finalization | TODO | WP-13 | — |
-| WP-16 | hosted-demo hardening | TODO | WP-14 WP-15 | D-08 (launch-gated) |
+| WP-16 | hosted-demo hardening | TODO | WP-14 WP-15 | checklist Gate 0 done (D-08) |
 
 Spikes (timeboxed, produce a Learnings entry + possibly decision revisions):
 
@@ -53,7 +53,8 @@ labor. Roles: `askrelay-dev` (implements one WP), `askrelay-test`
 (independently exercises the WP against its test plan — writes the tests the
 dev agent didn't think of), `askrelay-review` (fresh-context diff review
 against the WP entry + cited architecture sections). The roster files define
-each role's contract.
+each role's contract; **creating the roster is a prerequisite to WP-01** — no
+implementation session starts before `.claude/agents/` exists.
 
 **For every implementation session:**
 
@@ -61,8 +62,10 @@ each role's contract.
    this document plus the architecture sections each WP cites are the full
    context.
 2. **Pick work:** lowest-numbered WP with Status `TODO`, all *Depends on*
-   `DONE`, all *Gated by* decisions `APPROVED` (and gating spikes done). One WP
-   per session — they are sized to one reviewable PR.
+   `DONE`, all *Gated by* decisions `APPROVED` (and gating spikes done). A gate
+   may also name a launch-checklist condition; it counts only when that item
+   is checked off with evidence. One WP per session — they are sized to one
+   reviewable PR.
 3. Set Status `IN_PROGRESS` in §1 and commit the edit (claim marker).
 4. Orchestrate: `askrelay-dev` implements exactly what the entry says →
    `askrelay-test` runs the full test plan and adds adversarial tests →
@@ -110,12 +113,12 @@ empty until each WP's first import.
 | `github.com/golang-jwt/jwt/v5` | **v5.3.1** (2026-01-28) | WP-05 | MIT. EdDSA-signed, audience-bound access tokens (T-06); pairs with go-sdk's BYO `TokenVerifier`. |
 | `github.com/google/uuid` | latest at import (verify then) | WP-01 | UUIDv7 for envelope/thread IDs (T-02). Verify tag + license at WP-01 and record here. |
 | `golang.org/x/crypto` | not needed in v1 | — | stdlib `crypto/ed25519` covers signing (arch §3). If ever imported: v0.54.0 (2026-07-08, BSD-3) was current; avoid deprecated `openpgp` (GO-2026-5932). |
-| ~~`github.com/spf13/cobra`~~ | not adopted | — | v1.10.2 healthy (Apache-2.0) but rejected by T-05 (stdlib `flag` + subcommand dispatch); revisit only if verb count sprawls. |
+| ~~`github.com/spf13/cobra`~~ | not adopted | — | v1.10.2 healthy (Apache-2.0); not adopted per T-05 (PROPOSED — stdlib `flag` + subcommand dispatch); revisit only if verb count sprawls or T-05 is vetoed. |
 
 Release/CI tooling (not go.mod): Go **1.26.5** (2026-07-07) toolchain;
 GoReleaser **v2.17.0** (2026-07-04, MIT); golangci-lint **v2.12.2**
-(2026-05-06) via `golangci/golangci-lint-action@v9` (v9.3.0 — CI currently
-pins @v6, fixed in the Phase 4 re-scaffold).
+(2026-05-06) via `golangci/golangci-lint-action@v9` (v9.3.0; the pre-scaffold
+@v6 pin was fixed in Phase 4 — see §7).
 
 **MCP protocol:** target revision **2025-11-25** (current released; the
 2026-07-28 revision is an RC due in ~2 weeks that removes sessions/initialize
@@ -124,15 +127,19 @@ client-initiated-calls design; S-03 handles adoption).
 
 ## 4. Dependency graph
 
-```
-WP-01 envelope ──┬────────────────► WP-07 MCP surface ─┬─► WP-13 e2e ─► WP-14 pkg ─► WP-16 hosted
-WP-02 gate ──────┤                        ▲            │        │
-WP-11 redact ────┼──► WP-09 daemon ───────┘            │        └─► WP-15 docs
-                 │        ▲    └─► WP-10 CC push (S-01)│
-WP-03 store ─► WP-04 http ─► WP-05 RS ─► WP-06 AS ─────┘
-                 └─► WP-08 ws/delivery ─► WP-12 CLI
-(roots WP-01, WP-02, WP-03*, WP-11 can run in parallel; *WP-03 needs WP-01 types)
-```
+The §1 status-board *Depends on* column is authoritative; this list restates it
+as build-order tracks (a WP is eligible when everything left of it is DONE):
+
+- **Track A (pure libraries, parallel roots):** WP-01 envelope · WP-02 gate ·
+  WP-11 redact — no dependencies; can all run first, in any order.
+- **Track B (relay spine):** WP-01 → WP-03 store → WP-04 http → WP-05 RS →
+  WP-06 AS.
+- **Track C (surfaces):** {WP-01, WP-02, WP-03, WP-05} → WP-07 MCP surface;
+  {WP-03, WP-04} → WP-08 ws/delivery; {WP-04, WP-08} → WP-12 CLI.
+- **Track D (daemon):** {WP-01, WP-07, WP-08, WP-11} → WP-09 daemon →
+  (+ spike S-01) WP-10 Claude Code push.
+- **Convergence:** {WP-06, WP-07, WP-08, WP-09} → WP-13 e2e → WP-14 packaging
+  and WP-15 docs → {WP-14, WP-15} → WP-16 hosted (launch-gated, D-08).
 
 ## 5. Decision log
 
@@ -206,6 +213,9 @@ canonicalization, Ed25519 sign/verify, size caps, append-only versioning.
 **Files:** `internal/envelope/{envelope.go,canon.go,sign.go}` + tests +
 `fuzz_test.go`.
 
+**Dependency added:** `github.com/google/uuid` — pin per its §3 row: verify
+latest tag + license at import and record the result in the matrix.
+
 **Key API:**
 ```go
 type Envelope struct { V int; ID, Thread string; From Party; To string;
@@ -234,10 +244,12 @@ fails, with zero non-stdlib deps beyond `google/uuid`.
 **Status:** TODO · **Depends on:** — · **Gated by:** — ·
 **Spec:** arch §5.3; D-03, D-11.
 
-**Goal:** the approval/grant state machine, pure and I/O-free: inbound
-`submitted→input_required→approved|rejected`, outbound
-`pending_review→sent|discarded`, per-thread × direction grants with
-`via_grant` audit marks; A2A state-name mapping (arch §3).
+**Goal:** the approval/grant state machine, pure and I/O-free: approving an
+inbound message transitions its thread `input-required → working`, declining
+transitions it `→ rejected` (A2A-verbatim hyphenated names on the wire and in
+audit rows, whatever the Go identifiers are — arch §3, §5.3); outbound drafts
+`pending_review → sent | discarded`; per-thread × direction grants with
+`via_grant` audit marks.
 
 **Files:** `internal/gate/{gate.go,states.go}` + exhaustive table-driven tests.
 
@@ -307,7 +319,7 @@ handling; a claude.ai and ChatGPT connector each complete auth in S-04.
 **Status:** TODO · **Depends on:** WP-01 WP-02 WP-03 WP-05 · **Gated by:**
 T-07 T-08 T-10 · **Spec:** arch §5 (all), §9.
 
-**Goal:** the eight §5.1 tools on go-sdk stateless Streamable HTTP:
+**Goal:** the nine §5.1 tools on go-sdk stateless Streamable HTTP:
 `send_message`, `check_inbox`, `get_thread`, `approve_message`/
 `decline_message`, `approve_reply`/`discard_reply`, `set_thread_grant`,
 `wait_for_activity` (profile caps); `readOnlyHint` annotations; terse
@@ -385,18 +397,22 @@ timeout, failure = block send, never silently pass).
 `status`, `version` — thin calls over the device-credential HTTP/WS API;
 stdlib flag dispatch.
 
-**Test plan:** golden output tests; exit codes; works against WP-13's
-in-process relay.
+**Test plan:** golden output tests; exit codes; WP-12 spins up its own minimal
+in-process relay fixture for tests (WP-13 later adopts and extends that
+fixture — it is the seed of the e2e harness, stated here so the dependency
+direction stays WP-12 → WP-13).
 
 ### WP-13 — end-to-end harness + golden flows
 
-**Status:** TODO · **Depends on:** WP-07 WP-08 WP-09 · **Gated by:** — ·
-**Spec:** arch §2, §5, §6; D-01..D-05.
+**Status:** TODO · **Depends on:** WP-06 WP-07 WP-08 WP-09 · **Gated by:** — ·
+**Spec:** arch §2, §4.4, §5, §6; D-01..D-05.
 
 **Goal:** in-process relay + two fake devices driving the full loop:
 question → inbound approval → drafted reply → outbound review → delivery →
-acks → sweeper deletion. Includes the injection suite end-to-end and the
-grant-path variants. This is the tree's conscience; it runs in CI.
+acks → sweeper deletion. Includes the injection suite end-to-end, the
+grant-path variants, and adversarial runs against the WP-05/06 auth surface
+(R-06: PKCE downgrade, audience confusion, revoked-device tokens). This is the
+tree's conscience; it runs in CI.
 
 **Exit:** `go test ./e2e/...` proves the D-03/D-11 gates cannot be skipped by
 any tool sequence.
@@ -423,7 +439,8 @@ full version; AUP for the future hosted instance drafted.
 
 ### WP-16 — hosted-demo hardening
 
-**Status:** TODO · **Depends on:** WP-14 WP-15 · **Gated by:** D-08 (launch) ·
+**Status:** TODO · **Depends on:** WP-14 WP-15 · **Gated by:** launch-checklist
+Gate 0 fully checked (the §2 checklist-condition rule; D-08) ·
 **Spec:** arch §11; D-08; D-16.
 
 **Goal:** multi-team isolation audit, per-IP/per-team rate limits, abuse
@@ -438,6 +455,12 @@ public "try it in 60 seconds" relay of D-08/D-16.
   majors stale (@v6 → @v9): fixed in the Phase 4 re-scaffold commit, affects
   no WP. The 2026-07-28 MCP RC deprecates Roots/Sampling/Logging and removes
   sessions — reinforces T-07/S-03; no WP change.
+- 2026-07-16 — Five-reviewer fresh-context pass (arch §15 records it): WP-13
+  gained WP-06 as a dependency + adversarial auth runs; WP-02 state names
+  hyphenated to A2A-verbatim; WP-01 gained its uuid dependency line; WP-12
+  now owns the in-process relay fixture that WP-13 adopts; WP-16's gate made
+  checklist-checkable; R-10 (DCR churn) added; §4 graph replaced by track
+  list (the ASCII art disagreed with the authoritative table in four places).
 
 ## 8. Risk register
 
@@ -452,3 +475,4 @@ public "try it in 60 seconds" relay of D-08/D-16.
 | R-07 | SQLite single-writer contention at team scale | Latency blips | WAL + short transactions (T-03); team-sized load test in WP-13 |
 | R-08 | Squatted `askrelay.com` causes brand confusion | Mild, cosmetic | askrelay.dev owned (D-18); revisit .com post-traction (D-17) |
 | R-09 | A vendor ships first-party cross-person session messaging | Niche compresses (prior-art.md: Claude Tag expansion) | Phase 6 market research watches this; our moat is cross-vendor + self-hosted + OSS |
+| R-10 | DCR removed from the final MCP auth story before claude.ai migrates to CIMD | WP-06 registration path churn | Ship both DCR + CIMD (arch §4.4); S-03 re-checks the auth chapter of the 2026-07-28 final |

@@ -27,6 +27,9 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Build (dev tags)
+        run: go build -tags dev ./...
+
       - name: Vet
         run: go vet ./...
 

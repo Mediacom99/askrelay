@@ -52,7 +52,7 @@ it; your session gets it. Nobody copy-pastes anything.
 |---|---|---|---|
 | Claude Code (+ daemon) | ✅ | ✅ | seconds (push) or next prompt (hooks) |
 | Claude Code (remote-only) | ✅ | ✅ | on inbox check / long-poll |
-| Codex CLI | ✅ | ✅ | on next tool call |
+| Codex CLI (via the local daemon) | ✅ | ✅ | on next tool call |
 | claude.ai / Claude Desktop | ✅ | ✅ | next time they prompt |
 | ChatGPT (web, connector) | ✅ | ✅ | next time they prompt; plan-gating applies |
 | ChatGPT mobile | ❌ | ❌ | no custom connectors |
@@ -99,7 +99,8 @@ Apache-2.0, [DCO](https://developercertificate.org/) sign-off, **no CLA** —
 and that's a promise, not a placeholder: the license doesn't move. The project
 is built plan-first: work packages, dependency pins, and the session protocol
 are in the [implementation plan](docs/askrelay-implementation-plan.md). Issues
-and design discussion are welcome now; code PRs make sense once WP-01 lands.
+and design discussion are welcome now; code PRs make sense once WP-01 (the
+first work package — the signed envelope library) lands.
 
 askrelay's first users are the team at [Kosmoy](https://www.kosmoy.com) —
 built in the open from day one.

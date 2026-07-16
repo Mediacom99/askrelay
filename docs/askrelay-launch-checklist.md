@@ -2,8 +2,7 @@
 
 Gates are ordered; nothing in a later gate starts before the earlier gate is
 fully checked. Evidence expectations: check items off with a link or commit
-ref, not from memory. (Decisions cited: D-08 hosted-instance timing, D-14 org
-migration, D-15 positioning, D-16 playbook, D-17 trademark.)
+ref, not from memory. Decision citations (D-xx) are inline.
 
 ## Gate 0 — dogfooding (before any public word)
 
@@ -25,7 +24,12 @@ migration, D-15 positioning, D-16 playbook, D-17 trademark.)
 - [ ] 60–90 s demo video: A's Claude Code asks → B approves in ChatGPT → B's
       AI answers (D-15, D-16).
 - [ ] README front door + threat-model doc + per-client setup guides shipped
-      (WP-15); honest client matrix verbatim from arch §9.
+      (WP-15); honest client matrix from arch §9 (condensed is fine — the
+      architecture table is authoritative).
+- [ ] Kosmoy legal settled: owner-of-record for copyright/trademark named;
+      employer-IP terms for contributors documented in CONTRIBUTING.md
+      (oss-licensing.md; Phase 2 action item — must land before the first
+      external PR, since DCO presupposes it).
 - [ ] Hosted demo relay hardened and live (WP-16): rate limits, isolation
       audit, AUP, abuse contact (D-08).
 - [ ] Release pipeline proven: tagged pre-release built by GoReleaser; brew
