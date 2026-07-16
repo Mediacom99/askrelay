@@ -6,61 +6,61 @@ askrelay is an open-source tool for async, approval-gated messaging between
 people's AI sessions ("Your AI can ask my AI"): developer A's Claude Code
 session sends a question to colleague B; B approves; B's AI answers with its
 own context — no human copy-paste. Architecture: a thin self-hostable Go relay
-(single binary + SQLite) that serves Streamable HTTP MCP + OAuth 2.1 directly
+(single binary + SQLite) serving Streamable HTTP MCP + OAuth 2.1 directly
 (claude.ai/ChatGPT connect with zero install), plus an optional Go daemon that
 upgrades Claude Code with push and in-terminal approvals. Kosmoy colleagues are
 the first users; OSS (Apache-2.0 + DCO, no CLA) from day one.
 
-## Current status
+## Sources of truth (read in this order)
 
-**Decided, not yet documented or implemented.** Every design decision is
-recorded with a maintainer verdict in
-[`docs/phase2-decision-log.md`](docs/phase2-decision-log.md) (D-01..D-18),
-grounded in the live-verified research briefs under
-[`docs/research/`](docs/research/README.md). Next: write the architecture doc,
-implementation plan, launch checklist, full README, and the `.claude/agents/`
-roster — application code starts only after those land and only per the plan's
-work packages.
+1. [`docs/askrelay-architecture.md`](docs/askrelay-architecture.md) — design.
+2. [`docs/askrelay-implementation-plan.md`](docs/askrelay-implementation-plan.md)
+   — execution: work packages, **verified dependency pins (§3)**, technical
+   decisions (T-xx), risks, and the §2 session protocol. The plan wins over
+   the architecture doc where they differ.
+3. [`docs/phase2-decision-log.md`](docs/phase2-decision-log.md) — product
+   verdicts (D-01..D-18) binding both.
+4. [`docs/research/`](docs/research/README.md) — evidence briefs; every key
+   fact live-verified and independently re-checked.
 
-`go.mod` intentionally lists no dependencies; `cmd/askrelay/main.go` is a
-buildability placeholder. Dependencies are added when the first work package
-imports them, at versions pinned in the implementation plan.
+## How work happens here
 
-## Key decided constraints (full rationale in the decision log)
+- **Implementation sessions follow the plan's §2 protocol** — one work
+  package per session, status board as claim marker, learnings appended. The
+  copy-paste kickoff prompt is in that section.
+- The pipeline is planner + subagents: the main session orchestrates;
+  `.claude/agents/` defines `askrelay-dev`, `askrelay-test`, and
+  `askrelay-review` roles (created in the roster phase).
+- `go.mod` intentionally lists no dependencies; `cmd/askrelay/main.go` and the
+  `internal/*/doc.go` files are buildable placeholders citing their
+  architecture sections. Dependencies enter only at the plan §3 pins, only
+  when a WP first imports them.
 
-- Async mailbox; DMs + threads only; A2A-aligned signed envelopes (Ed25519,
-  per-device keys from invite-link enrollment).
-- Approval gates both directions: per-message default, revocable per-thread
-  grants; unattended auto-reply deferred to v1.1 (API-key-only, pending
-  Anthropic ToS clarification).
-- Claude Code first-class; claude.ai/ChatGPT as remote-MCP senders with
-  honestly-documented pull-only answering; Codex like Claude Code minus push.
+## Standing constraints (full rationale in the decision log)
+
+- Approval gates both directions (per-message default, revocable per-thread
+  grants); no code path may bypass them. Unattended auto-reply is v1.1,
+  API-key-only, pending Anthropic ToS clarification.
 - Inbound = untrusted data: spotlighting, no tool triggering, clients never
-  auto-fetch URLs/images from message content. Client-side secret redaction
-  (built-in patterns + hook). Relay retention is ephemeral (delete after
-  delivery-ack). No ML guardrail classifiers.
-- Go everywhere in v1. Relay never sees vendor credentials; never drive a
-  consumer web session; unattended modes must use API keys (vendor ToS).
-- Design MCP integration for client-initiated tool calls only (no sampling, no
-  server-push assumptions); the relay handles MCP statelessly.
+  auto-fetch URLs/images from message content. Client-side secret redaction;
+  ephemeral relay retention. No ML guardrail classifiers.
+- MCP: client-initiated tool calls only; stateless Streamable HTTP; protocol
+  2025-11-25 via go-sdk v1.6.1 until spike S-03 says otherwise. No sampling,
+  no server-push assumptions.
+- Relay never sees vendor credentials; never drive a consumer web session
+  (vendor ToS).
+- Go 1.26, `CGO_ENABLED=0` everywhere; single-binary distribution.
 
 ## Common commands
 
-Run via the Makefile (`make help` lists targets): `make build` / `make run
-ARGS="..."` / `make test` / `make tidy` / `make lint` / `make overview`.
+Via the Makefile (`make help`): `make build` / `make run ARGS="..."` /
+`make test` / `make tidy` / `make lint` / `make overview`.
 
-CI (`.github/workflows/ci.yml`) runs build, vet, test, and golangci-lint.
+CI (`.github/workflows/ci.yml`): build, vet, test, golangci-lint.
 
-## Documentation
+## Documentation upkeep
 
-- [`docs/phase2-decision-log.md`](docs/phase2-decision-log.md) — all decisions,
-  with verdicts; **the source of truth until the architecture doc lands**.
-- [`docs/research/`](docs/research/README.md) — decision briefs; every key fact
-  was verified against a live source and independently re-checked.
-- `docs/askrelay-architecture.md`, `docs/askrelay-implementation-plan.md`,
-  `docs/askrelay-launch-checklist.md` — being written next; they become the
-  sources of truth for design and execution respectively.
-- `docs/askrelay-overview.html` — generated single-page reading copy.
-  **Generated — never edit by hand.** After editing any markdown doc listed in
-  `docs/tools/build-overview.py` (or README.md / this file), run
-  `make overview` and commit the regenerated HTML in the same commit.
+`docs/askrelay-overview.html` is generated — **never edit by hand**. After
+editing any markdown doc listed in `docs/tools/build-overview.py` (or
+README.md / this file), run `make overview` and commit the regenerated HTML in
+the same commit.

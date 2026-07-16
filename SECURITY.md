@@ -1,22 +1,35 @@
 # Security policy
 
-askrelay is pre-release: there are no supported versions and nothing runnable
-yet. This policy will be replaced by a full one (with a published threat model)
-before the first release.
-
 ## Reporting a vulnerability
 
-Please use GitHub's private vulnerability reporting on this repository
-(**Security → Report a vulnerability**). Do not open public issues for
-security reports.
+Use GitHub's private vulnerability reporting on this repository
+(**Security → Report a vulnerability**). Please do not open public issues or
+discussions for security reports. You'll get an acknowledgment within 72 hours
+and a coordinated-disclosure timeline agreed with you (90 days by default).
 
-## Why security is the product's center
+## Supported versions
+
+Pre-release: no supported versions yet. From `v0.1.0` onward, the latest minor
+release receives security fixes.
+
+## Scope and posture
 
 askrelay moves model-authored text between different people's AI sessions.
-Prompt injection and data leakage are therefore its central design constraints,
-not edge cases: inbound messages are treated as untrusted data behind a human
-approval gate, outgoing AI-drafted replies are reviewed before sending, clients
-never auto-fetch content referenced in messages, and the relay's retention is
-ephemeral. The research this posture is built on — including the documented
-2025–26 incidents in MCP-connected systems — is in
-[`docs/research/security.md`](docs/research/security.md).
+Prompt injection and data leakage are its central design constraints, not edge
+cases. The architectural invariants (see
+[architecture §8](docs/askrelay-architecture.md#8-security--threat-model)):
+
+- Inbound messages are untrusted data: quarantine rendering, no tool
+  triggering, human approval gates in both directions, no auto-fetching of
+  message-referenced content — regardless of sender.
+- Per-device Ed25519 signatures prove origin and never imply safety; devices
+  are individually revocable.
+- Client-side secret redaction with visible markers; the relay flags but never
+  silently rewrites.
+- The relay stores plaintext ephemerally (deleted after delivery-ack + grace);
+  self-hosting inside your perimeter is the recommended deployment.
+
+Reports that gate approvals, break the quarantine rendering, leak message
+bodies past retention, or confuse device identity are exactly what we want to
+hear about — the [security research brief](docs/research/security.md) documents
+the incident class this project is designed against.
