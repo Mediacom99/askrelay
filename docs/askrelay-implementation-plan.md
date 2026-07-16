@@ -13,7 +13,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 
 | WP | Package | Status | Depends on | Gated by |
 |---|---|---|---|---|
-| WP-01 | `internal/envelope` — signed envelope | TODO | — | T-01 T-02 |
+| WP-01 | `internal/envelope` — signed envelope | TODO | — | T-01 T-02 S-05 |
 | WP-02 | `internal/gate` — approval/grant state machine | TODO | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | TODO | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
@@ -38,6 +38,7 @@ Spikes (timeboxed, produce a Learnings entry + possibly decision revisions):
 | S-02 | Real long-poll ceilings per client for `wait_for_activity` (arch §5.4; the ~28 h Claude Code figure is unverified) | before WP-07 exit |
 | S-03 | MCP 2026-07-28 final release + go-sdk v1.7.0 stable: what changes for us? | ~2026-07-28 |
 | S-04 | Live ChatGPT connector validation on the team's actual plans (write-MCP gating, Plus behavior) | with WP-13 |
+| S-05 | askmesh autopsy + differentiation memo (D-19/C1): install `@askmesh/mcp`, read code/docs, hunt for launch evidence, pull the npm download curve, contact the author if feasible. Two outputs: (a) verdict — demand-absence (→ §8 kill criterion 1 fires; positioning cannot rescue a dead category) vs execution-failure (→ proceed); (b) a differentiation memo — what problem askmesh actually solved (knowledge-mesh/context-sharing) vs ours (consented asking across trust boundaries), what to learn/keep/avoid — feeding the docs' positioning, not public comparison marketing (nobody knows askmesh) | **before WP-01, by 2026-08-01** |
 
 ### Decisions (summary — full entries in §5)
 
@@ -205,8 +206,8 @@ reference and bind every WP.
 
 ### WP-01 — `internal/envelope`
 
-**Status:** TODO · **Depends on:** — · **Gated by:** T-01 T-02 ·
-**Spec:** arch §3, §12.
+**Status:** TODO · **Depends on:** — · **Gated by:** T-01 T-02 S-05 (§8 kill
+criterion 1) · **Spec:** arch §3, §12.
 
 **Goal:** the envelope as the single shared artifact: types, JCS
 canonicalization, Ed25519 sign/verify, size caps, append-only versioning.
@@ -245,12 +246,15 @@ fails, with zero non-stdlib deps beyond `google/uuid`.
 **Status:** TODO · **Depends on:** — · **Gated by:** — ·
 **Spec:** arch §5.3; D-03, D-11.
 
-**Goal:** the approval/grant state machine, pure and I/O-free: approving an
-inbound message transitions its thread `input-required → working`, declining
-transitions it `→ rejected` (A2A-verbatim hyphenated names on the wire and in
-audit rows, whatever the Go identifiers are — arch §3, §5.3); outbound drafts
-`pending_review → sent | discarded`; per-thread × direction grants with
-`via_grant` audit marks.
+**Goal:** the approval/grant state machine, pure and I/O-free — and
+payload-agnostic by design (D-19/C4): the machine operates on
+`Approvable{Kind, Payload}`, with `kind = "message"` the only v1 kind; gates,
+grants, and audit rows never assume message-ness (this is the deliberate hinge
+to the approval-gateway adjacency). Approving an inbound message transitions
+its thread `input-required → working`, declining transitions it `→ rejected`
+(A2A-verbatim hyphenated names on the wire and in audit rows, whatever the Go
+identifiers are — arch §3, §5.3); outbound drafts `pending_review → sent |
+discarded`; per-thread × direction grants with `via_grant` audit marks.
 
 **Files:** `internal/gate/{gate.go,states.go}` + exhaustive table-driven tests.
 
@@ -456,6 +460,11 @@ public "try it in 60 seconds" relay of D-08/D-16.
   majors stale (@v6 → @v9): fixed in the Phase 4 re-scaffold commit, affects
   no WP. The 2026-07-28 MCP RC deprecates Roots/Sampling/Logging and removes
   sessions — reinforces T-07/S-03; no WP change.
+- 2026-07-16 — Market verdict GO_WITH_CHANGES adopted (D-19 resolution): S-05
+  askmesh-autopsy gate added before WP-01; §8 kill criteria pre-registered;
+  WP-02 now centers `Approvable{Kind, Payload}` (C4); positioning amended
+  (hook + moat-forward subtitle, C2); same-owner cross-machine documented as a
+  day-one scenario (C3, arch §2). Sections renumbered: risk register is §9.
 - 2026-07-16 — Five-reviewer fresh-context pass (arch §15 records it): WP-13
   gained WP-06 as a dependency + adversarial auth runs; WP-02 state names
   hyphenated to A2A-verbatim; WP-01 gained its uuid dependency line; WP-12
@@ -463,7 +472,43 @@ public "try it in 60 seconds" relay of D-08/D-16.
   checklist-checkable; R-10 (DCR churn) added; §4 graph replaced by track
   list (the ASCII art disagreed with the authoritative table in four places).
 
-## 8. Risk register
+## 8. Kill criteria & market checkpoints (D-19)
+
+Adopted verbatim from [`research/market-verdict.md`](research/market-verdict.md)
+(maintainer, 2026-07-16), pre-registered **before code** so the
+employer-as-first-user relationship cannot quietly substitute for
+disconfirmation. Read from evidence (relay metrics, dated events), never from
+impressions.
+
+1. **Pre-code (by 2026-08-01)** — S-05 askmesh autopsy shows a competent,
+   discoverable, actually-distributed product that teammates simply declined
+   (demand absence, not execution failure): **stop before application code**.
+2. **Ship date (2026-10-15)** — v1 relay not deployed and in use at Kosmoy:
+   cut v1 drastically or stop; **never extend the docs phase instead**.
+3. **Core demand (8 weeks post-deploy; hard stop 2027-01-31)** — fewer than 3
+   distinct Kosmoy pairs exchanging cross-person approval-gated messages in
+   ≥ 2 of any 4 consecutive weeks without maintainer prompting: execute the
+   approval-gateway pivot or wind down to internal tool + portfolio artifact.
+4. **External validation (~2027-04)** — zero unsolicited external deployments
+   AND zero organic cross-org/cross-vendor demand signals: stop
+   category-creation marketing; maintain for Kosmoy; decide pivot vs sunset.
+5. **Vendor tripwire (continuous)** — Anthropic ships org-scoped cross-session
+   / agent-teams messaging, or session sharing becomes per-person
+   session-to-session messaging. Pre-ship: reposition cross-vendor/cross-org-
+   only or stop. Post-ship: drop the same-org pitch, hold the moat quadrant.
+6. **Capacity floor (rolling, first 6 months)** — monthly releases
+   unsustainable, or a security report unacknowledged beyond 72 h: cut scope
+   immediately or execute a documented wind-down. For a consent product, a
+   neglected security posture is worse than an archived repo.
+
+Supporting commitments from the same resolution: ≥ monthly releases for six
+months (C5); co-maintainer recruitment + public cadence statement +
+non-dismissive-response precommit at launch (C7); Kosmoy paid-hours
+conversation after dogfooding proves value (C8, modified); 2–3 cross-org
+tester pairs post-v1, timing flexible (C9, modified). The watch list lives in
+market-verdict.md.
+
+## 9. Risk register
 
 | # | Risk | Exposure | Mitigation / trigger |
 |---|---|---|---|

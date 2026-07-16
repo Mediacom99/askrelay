@@ -7,6 +7,10 @@ Use GitHub's private vulnerability reporting on this repository
 discussions for security reports. You'll get an acknowledgment within 72 hours
 and a coordinated-disclosure timeline agreed with you (90 days by default).
 
+For a tool whose product *is* the approval gate, a consent-bypass report is a
+drop-everything event: we pre-commit to fast, non-dismissive handling —
+validation over defensiveness, and credit to the reporter.
+
 ## Supported versions
 
 Pre-release: no supported versions yet. From `v0.1.0` onward, the latest minor

@@ -261,6 +261,38 @@ market-verdict.md are the reference framing for v1 success metrics.
 **Verdict:** APPROVED (maintainer, 2026-07-16) — "record verdict only, decide
 changes together afterwards."
 
+**Resolution (maintainer, 2026-07-16 — each change decided individually):**
+
+- C1 askmesh autopsy — **ADOPTED as a gate before WP-01** (plan spike S-05,
+  kill criterion dated 2026-08-01). Maintainer extension: S-05 also produces a
+  differentiation memo — askrelay positions as a different solution to a
+  different problem (consented asking across trust boundaries, not a shared
+  knowledge mesh) while keeping the core functionality; extraction of
+  askmesh's lessons is an explicit spike output. Guard: positioning cannot
+  rescue a dead category — the autopsy verdict still governs kill criterion 1.
+- C2 positioning — **ADOPTED MODIFIED**: "Your AI can ask my AI." stays the
+  headline; subtitle and README opening foreground the moat surfaces
+  (cross-vendor, cross-org, self-hosted, approval-as-product) and the
+  answering-side differentiator (B's live local session context). *This
+  amends D-15.*
+- C3 same-owner cross-machine scenario — **ADOPTED** as a documented day-one
+  scenario (architecture §2, README), vendor-exposure argued explicitly.
+- C4 `Approvable{Kind, Payload}` gate abstraction — **ADOPTED** (architecture
+  §5.3, WP-02).
+- C5 ship discipline — **ADOPTED**: v1 deployed at Kosmoy by 2026-10-15 as a
+  kill criterion; maintainer commits to ≥monthly releases for six months.
+- C6 kill criteria — **ADOPTED verbatim** into plan §8, pre-registered before
+  code.
+- C7 launch package — **ADOPTED** (co-maintainer recruitment, public cadence
+  statement, non-dismissive vuln-response precommit in SECURITY.md).
+- C8 Kosmoy sponsorship — **ADOPTED MODIFIED**: paid-maintenance-hours
+  conversation deferred until dogfooding proves value ("ask later").
+- C9 cross-org tester pairs — **ADOPTED MODIFIED**: 2–3 pairs post-v1, timing
+  flexible (stability before goodwill-burn).
+- C10 planning-hygiene corrections — **N/A**: no governing doc cites the
+  corrected figures; corrections live in the market briefs' verification
+  sections.
+
 ## Open action items from Phase 2 (feed the plan/checklist in Phase 4)
 
 - Ask Anthropic (channel named on their legal page) whether human-approved relay

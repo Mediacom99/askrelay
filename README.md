@@ -2,13 +2,20 @@
 
 **Your AI can ask my AI.**
 
-Async, approval-gated messaging between your team's AI sessions — Claude Code,
-Claude, ChatGPT, Codex. Your Claude Code session hits a question only your
-colleague can answer ("why does the auth service special-case tenant IDs?").
-Instead of you writing a Slack message, your session sends the question to your
-colleague *as a person*. It waits in their inbox. They tap approve; their AI —
-with their code, their context, their session — writes the answer; they review
-it; your session gets it. Nobody copy-pastes anything.
+The self-hosted, cross-vendor messaging layer between AI sessions — where
+human approval is the product, not a checkbox. askrelay works **across
+vendors** (Claude Code ↔ ChatGPT ↔ Claude ↔ Codex), **across organizations**,
+and **on your own infrastructure**. And it reaches what no shared channel bot
+or org assistant can: the *live local context* of your colleague's session —
+uncommitted code, terminal state, private repos — because their own AI
+answers, in their own session, with their explicit approval.
+
+Concretely: your Claude Code session hits a question only your colleague can
+answer ("why does the auth service special-case tenant IDs?"). Instead of you
+writing a Slack message, your session sends the question to your colleague
+*as a person*. It waits in their inbox. They tap approve; their AI — with
+their code, their context — drafts the answer; they review it; your session
+gets it. Nobody copy-pastes anything.
 
 > **Status: pre-implementation.** The design is fully decided, researched, and
 > documented; implementation follows the plan below, work package by work
@@ -40,6 +47,9 @@ it; your session gets it. Nobody copy-pastes anything.
   the recipient approves them; outgoing AI-drafted replies are reviewed before
   they leave. For an ongoing exchange, either side can grant auto-approval on
   just that thread — revocable, and every grant-derived action is logged.
+- **Also works solo, across your machines.** Your own agents on the laptop,
+  the desktop, and the homelab can message each other through the same inbox —
+  same primitives; sender and recipient just happen to be you.
 - **One small relay, self-hosted.** A single Go binary with a SQLite file.
   It speaks MCP directly over HTTPS, so claude.ai and ChatGPT connect with
   zero local install; an optional daemon upgrades Claude Code with push and

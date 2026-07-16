@@ -2,7 +2,9 @@
 
 Gates are ordered; nothing in a later gate starts before the earlier gate is
 fully checked. Evidence expectations: check items off with a link or commit
-ref, not from memory. Decision citations (D-xx) are inline.
+ref, not from memory. Decision citations (D-xx) are inline. The implementation
+plan's §8 kill criteria govern continue/stop decisions; this checklist
+implements their launch-adjacent items.
 
 ## Gate 0 — dogfooding (before any public word)
 
@@ -41,6 +43,11 @@ ref, not from memory. Decision citations (D-xx) are inline.
       with no-relicense pledge (D-13).
 - [ ] Security review of the OAuth surface (R-06) — at minimum a focused
       internal pass; external audit if budget allows.
+- [ ] At least one co-maintainer or serious early contributor on board (a
+      Kosmoy colleague counts) — the "one contributor = dead by default"
+      heuristic (D-19/C7).
+- [ ] Public release-cadence statement (≥ monthly for the first six months)
+      in README/GOVERNANCE (D-19/C5, C7).
 
 ## Launch sequence (one day)
 
@@ -68,3 +75,8 @@ ref, not from memory. Decision citations (D-xx) are inline.
 - [ ] Revisit squatted `askrelay.com` (negotiate or ignore — D-18/R-08).
 - [ ] v1.1 planning gate: unattended auto-reply only if the Anthropic answer
       permits it (D-03, R-03).
+- [ ] Kosmoy paid-maintenance-hours conversation, once dogfooding has proven
+      value (D-19/C8 — "ask later").
+- [ ] Recruit 2–3 cross-org tester pairs (OSS co-maintainers, contractor/
+      client) when stable enough not to burn goodwill — the moat-quadrant
+      probe (D-19/C9).

@@ -75,6 +75,14 @@ Three components (D-06):
 One binary ships both roles as subcommands plus operator/user verbs
 (`invite`, `enroll`, `approve`, `status`) — see §7.
 
+Two scenarios ship day one (D-19/C3). **Cross-person** — A asks B — is the
+product. **Same-owner cross-machine** — your own agents on different machines
+messaging each other through your own inbox — is the same primitives with
+sender = recipient, requires no design changes, and is the only flavor with
+demonstrated public demand today (research/market-demand-direct.md). It is
+documented honestly as the vendor-exposed wedge (research/market-vendor-clock.md);
+cross-person remains the differentiating superset.
+
 ## 3. Envelope & data model
 
 A2A-aligned by decision (D-06, a2a.md): we borrow Agent2Agent's *semantics* —
@@ -232,8 +240,12 @@ as plain text (not links) in tool output.
 ### 5.3 Both gates live in the relay
 
 The approval state machine runs server-side (single source of truth; every
-client sees identical state). Gate outcomes are a separate vocabulary from §3
-thread states: *approving* an inbound message transitions its thread
+client sees identical state) and is **payload-agnostic by design** (D-19/C4):
+it operates on *approvables* — `Approvable{Kind, Payload}`, with
+`kind = "message"` the only v1 kind. Gates, grants, and audit rows never
+assume message-ness; this is the deliberate hinge to a broader
+approval-gateway use should the messaging niche compress. Gate outcomes are a
+separate vocabulary from §3 thread states: *approving* an inbound message transitions its thread
 `input-required → working`; *declining* transitions it `→ rejected`; outbound
 drafts move `pending_review → (sent | discarded)`. Grants short-circuit a gate
 *per thread and direction only*; every grant-created transition carries
