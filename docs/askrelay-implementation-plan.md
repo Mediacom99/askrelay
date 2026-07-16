@@ -148,40 +148,40 @@ Product decisions **D-01..D-18**: recorded with APPROVED verdicts in
 [`phase2-decision-log.md`](phase2-decision-log.md); they are imported here by
 reference and bind every WP.
 
-### Technical decisions (maintainer verdict pending where PROPOSED)
+### Technical decisions
 
 - **T-01 — Envelope wire format: JSON + RFC 8785 (JCS) canonical form for
   signing.** MCP's wire language, human-debuggable, no gossip-style size
   pressure; JCS gives deterministic bytes for Ed25519 without a second codec.
   Rejected: CBOR (second codec for no win here), protobuf (schema toolchain
-  tax). *PROPOSED*
+  tax). *APPROVED (maintainer, 2026-07-16)*
 - **T-02 — IDs: UUIDv7 (`github.com/google/uuid`).** Time-sortable (inbox
   ordering, index locality), standard, one tiny dep. Rejected: ULID lib
   (equivalent, less standard), stdlib-only random UUIDs (no ordering).
   *APPROVED (maintainer, 2026-07-16)*
 - **T-03 — SQLite via `modernc.org/sqlite`.** Pure-Go keeps CGO_ENABLED=0 and
   trivial cross-compilation (D-09). WAL mode; single-writer discipline via a
-  store-level mutex; `busy_timeout` set. *PROPOSED*
+  store-level mutex; `busy_timeout` set. *APPROVED (maintainer, 2026-07-16)*
 - **T-04 — WebSocket via `github.com/coder/websocket`.** Maintained canonical
-  fork, ISC, zero deps. *PROPOSED*
+  fork, ISC, zero deps. *APPROVED (maintainer, 2026-07-16)*
 - **T-05 — CLI: stdlib `flag` + hand-rolled subcommand dispatch.** ~10 verbs,
   no dynamic completion needs in v1; keeps the dep tree at 5 modules. Cobra
-  re-considered if verbs sprawl (matrix row kept). *PROPOSED*
+  re-considered if verbs sprawl (matrix row kept). *APPROVED (maintainer, 2026-07-16)*
 - **T-06 — Tokens: EdDSA-signed JWTs (`golang-jwt/jwt/v5`), audience-bound
   (RFC 8707 resource), 1 h access / refresh at AS; device WS credential is a
   distinct long-lived token bound to the device record.** go-sdk `auth`
-  supplies PRM + bearer plumbing; verification callback is ours. *PROPOSED*
+  supplies PRM + bearer plumbing; verification callback is ours. *APPROVED (maintainer, 2026-07-16)*
 - **T-07 — MCP: go-sdk v1.6.1, stateless Streamable HTTP mode, protocol
-  2025-11-25; migrate to v1.7.0/2026-07-28 only via S-03 outcome.** *PROPOSED*
+  2025-11-25; migrate to v1.7.0/2026-07-28 only via S-03 outcome.** *APPROVED (maintainer, 2026-07-16)*
 - **T-08 — Spotlighting format as specified in arch §5.2** (fresh nonce per
   rendering, static warning preamble, URLs as plain text, provenance line).
-  Golden-tested in WP-13. *PROPOSED*
+  Golden-tested in WP-13. *APPROVED (maintainer, 2026-07-16)*
 - **T-09 — Retention defaults: delete on all-devices-ack + 72 h grace; hard
   TTL 30 days; grants/audit rows immortal** (D-10). Operator-tunable, floor
-  1 h. *PROPOSED*
+  1 h. *APPROVED (maintainer, 2026-07-16)*
 - **T-10 — `wait_for_activity` caps: daemon n/a (WS); claude.ai 240 s; ChatGPT
   45 s; Claude Code remote 25 min default** — revised by S-02 evidence, not by
-  hope. *PROPOSED*
+  hope. *APPROVED (maintainer, 2026-07-16)*
 - **T-11 — Config: relay = flags + env only; daemon/user =
   `~/.config/askrelay/config.json` (0600) + key file beside it** (arch §7).
   *APPROVED (maintainer, 2026-07-16)*
@@ -197,9 +197,9 @@ reference and bind every WP.
   localhost debug endpoint; prod artifacts contain neither; CI builds both).
   *APPROVED (maintainer, 2026-07-16)*
 - **T-14 — HTTP routing: stdlib `net/http` ServeMux (1.22+ method patterns).**
-  No router dep. *PROPOSED*
+  No router dep. *APPROVED (maintainer, 2026-07-16)*
 - **T-15 — Logging: stdlib `log/slog`, JSON handler on the relay, text on the
-  daemon; no third-party logger.** *PROPOSED*
+  daemon; no third-party logger.** *APPROVED (maintainer, 2026-07-16)*
 
 ## 6. Work packages
 
