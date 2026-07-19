@@ -48,3 +48,23 @@ pre-code homework, kill criteria, and a watch list.
 | [Market size](market-market-size.md) | see per-item verdicts |
 | [Flagship fit: solo-maintainer base rates](market-flagship-fit.md) | see per-item verdicts |
 | [Futures: adjacencies](market-futures.md) | see per-item verdicts |
+
+## Commercialization posture (2026-07-19) — license & business-model review
+
+Third sweep, testing whether D-13 (Apache-2.0 everything) and D-08 (free hosted
+instance) should become open-core/paid-hosted or proprietary. Five verified
+briefs, a three-advocate panel (pure-Apache / AGPL-split / open-core-early),
+and a synthesis. **Verdict document:
+[commercial-posture-verdict.md](commercial-posture-verdict.md):
+KEEP_APACHE_PURE_OSS** — with a corrected licensing premise (the DCO lock runs
+the opposite direction from D-13's recorded rationale), the AGPL fallback
+proposed retired, D-08 guardrails, and employer-IP actions as the real
+pre-launch lock.
+
+| Brief | Verification |
+|---|---|
+| [Hosted-tier economics (real numbers, incl. failures)](commercial-hosted-economics.md) | 13 confirmed, 2 failed |
+| [Paid tier at launch vs later: adoption effects](commercial-timing-effects.md) | 10 confirmed, 3 failed |
+| [License mechanics: what DCO actually locks](commercial-license-mechanics.md) | 14 confirmed, 1 failed |
+| [Willingness-to-pay in agent infra](commercial-wtp-agent-infra.md) | 12 confirmed, 1 failed |
+| [Entity, employer-IP, sponsor structures](commercial-entity-sponsor.md) | 12 confirmed, 2 failed |
