@@ -49,6 +49,13 @@ pre-code homework, kill criteria, and a watch list.
 | [Flagship fit: solo-maintainer base rates](market-flagship-fit.md) | see per-item verdicts |
 | [Futures: adjacencies](market-futures.md) | see per-item verdicts |
 
+**Follow-up spike (S-05), 2026-07-20:
+[askmesh-autopsy.md](askmesh-autopsy.md)** — the market verdict's mandatory
+pre-code homework. Verdict **PROCEED**: askmesh (the one prior attempt at this
+product) was never launched, so its near-zero adoption is invisibility, not
+rejection — it is not evidence against us. Surfaced the cold-start/retention
+risk (R-11) and the differentiation memo feeding D-21.
+
 ## Commercialization posture (2026-07-19) — license & business-model review
 
 Third sweep, testing whether D-13 (Apache-2.0 everything) and D-08 (free hosted

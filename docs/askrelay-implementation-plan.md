@@ -13,7 +13,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 
 | WP | Package | Status | Depends on | Gated by |
 |---|---|---|---|---|
-| WP-01 | `internal/envelope` — signed envelope | TODO | — | T-01 T-02 S-05 |
+| WP-01 | `internal/envelope` — signed envelope | TODO | — | T-01 T-02 S-05 ✓ |
 | WP-02 | `internal/gate` — approval/grant state machine | TODO | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | TODO | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
@@ -38,7 +38,7 @@ Spikes (timeboxed, produce a Learnings entry + possibly decision revisions):
 | S-02 | Real long-poll ceilings per client for `wait_for_activity` (arch §5.4; the ~28 h Claude Code figure is unverified) | before WP-07 exit |
 | S-03 | MCP 2026-07-28 final release + go-sdk v1.7.0 stable: what changes for us? | ~2026-07-28 |
 | S-04 | Live ChatGPT connector validation on the team's actual plans (write-MCP gating, Plus behavior) | with WP-13 |
-| S-05 | askmesh autopsy + differentiation memo (D-19/C1): install `@askmesh/mcp`, read code/docs, hunt for launch evidence, pull the npm download curve, contact the author if feasible. Two outputs: (a) verdict — demand-absence (→ §8 kill criterion 1 fires; positioning cannot rescue a dead category) vs execution-failure (→ proceed); (b) a differentiation memo — what problem askmesh actually solved (knowledge-mesh/context-sharing) vs ours (consented asking across trust boundaries), what to learn/keep/avoid — feeding the docs' positioning, not public comparison marketing (nobody knows askmesh) | **before WP-01, by 2026-08-01** |
+| S-05 | askmesh autopsy + differentiation memo (D-19/C1) | **DONE 2026-07-20** — verdict **PROCEED** (kill criterion 1 does not fire: askmesh was closed-source, unlisted, never launched — invisibility, not rejection). Two findings carried forward: demand is now *unproven not disproven* (no positive signal), and the cold-start/retention hazard is inherited (→ new risk R-11; sharpened kill criterion 3). Differentiation memo: askmesh automates answering (closed Claude-only cloud, no inbound-trust model); askrelay makes consented, safe, cross-vendor asking the product. Full writeup: `docs/research/askmesh-autopsy.md` |
 
 ### Decisions (summary — full entries in §5)
 
@@ -206,8 +206,8 @@ reference and bind every WP.
 
 ### WP-01 — `internal/envelope`
 
-**Status:** TODO · **Depends on:** — · **Gated by:** T-01 T-02 S-05 (§8 kill
-criterion 1) · **Spec:** arch §3, §12.
+**Status:** TODO · **Depends on:** — · **Gated by:** T-01 T-02 (both APPROVED),
+S-05 (§8 kill criterion 1 — **cleared 2026-07-20, PROCEED**) · **Spec:** arch §3, §12.
 
 **Goal:** the envelope as the single shared artifact: types, JCS
 canonicalization, Ed25519 sign/verify, size caps, append-only versioning.
@@ -482,6 +482,14 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
   now owns the in-process relay fixture that WP-13 adopts; WP-16's gate made
   checklist-checkable; R-10 (DCR churn) added; §4 graph replaced by track
   list (the ASCII art disagreed with the authoritative table in four places).
+- 2026-07-20 — S-05 askmesh autopsy DONE early → **PROCEED** (kill criterion 1
+  cleared: askmesh was never launched, so its low adoption is not a demand
+  signal against us). WP-01's S-05 gate satisfied. Two consequences: risk R-11
+  (cold-start/retention) added as the core existential risk; kill criterion 3
+  re-scoped to measure retention past novelty, not trial. Also adopted the D-21
+  strategic framing (success definition, why-we-build, answering-side-moat lead,
+  same-owner front-door candidate, security-response as top commitment,
+  askmesh differentiation). Writeup: `docs/research/askmesh-autopsy.md`.
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
@@ -494,12 +502,20 @@ impressions.
 1. **Pre-code (by 2026-08-01)** — S-05 askmesh autopsy shows a competent,
    discoverable, actually-distributed product that teammates simply declined
    (demand absence, not execution failure): **stop before application code**.
+   → **RESOLVED 2026-07-20: PROCEED.** askmesh was never launched (closed-source,
+   unlisted, zero footprint); its low adoption is invisibility, not rejection,
+   so it is not evidence against us. Recorded caveat: demand is unproven, not
+   proven — the burden now shifts to kill criterion 3.
 2. **Ship date (2026-10-15)** — v1 relay not deployed and in use at Kosmoy:
    cut v1 drastically or stop; **never extend the docs phase instead**.
-3. **Core demand (8 weeks post-deploy; hard stop 2027-01-31)** — fewer than 3
-   distinct Kosmoy pairs exchanging cross-person approval-gated messages in
-   ≥ 2 of any 4 consecutive weeks without maintainer prompting: execute the
-   approval-gateway pivot or wind down to internal tool + portfolio artifact.
+3. **Core demand — now the load-bearing test (8 weeks post-deploy; hard stop
+   2027-01-31)** — fewer than 3 distinct Kosmoy pairs exchanging cross-person
+   approval-gated messages in ≥ 2 of any 4 consecutive weeks without maintainer
+   prompting: execute the approval-gateway pivot or wind down to internal tool +
+   portfolio artifact. **This measures RETENTION past novelty, not trial** —
+   the askmesh autopsy (S-05) showed trial bursts with no stickiness, and its
+   cold-start network effect (R-11) is the hazard our OSS/self-host edges do not
+   fix; the whole-team Kosmoy dogfood exists precisely to test this.
 4. **External validation (~2027-04)** — zero unsolicited external deployments
    AND zero organic cross-org/cross-vendor demand signals: stop
    category-creation marketing; maintain for Kosmoy; decide pivot vs sunset.
@@ -533,3 +549,4 @@ market-verdict.md.
 | R-08 | Squatted `askrelay.com` causes brand confusion | Mild, cosmetic | askrelay.dev owned (D-18); revisit .com post-traction (D-17) |
 | R-09 | A vendor ships first-party cross-person session messaging | Niche compresses (prior-art.md: Claude Tag expansion) | Phase 6 market research watches this; our moat is cross-vendor + self-hosted + OSS |
 | R-10 | DCR removed from the final MCP auth story before claude.ai migrates to CIMD | WP-06 registration path churn | Ship both DCR + CIMD (arch §4.4); S-03 re-checks the auth chapter of the 2026-07-28 final |
+| R-11 | Cold-start / retention network effect — value requires the other person also on it and responsive; a solo installer churns (askmesh's likely killer, S-05) | The core existential risk; OSS/self-host/zero-install do NOT fix it | Kosmoy whole-team dogfood adopts all-at-once (not solo trials); kill criterion 3 measures retention not trial; onboard in pairs; make first-run useful even before a reply lands (e.g. same-owner cross-machine, D-19/C3) |

@@ -403,6 +403,57 @@ after, first colleague contributions. Full analysis and draft actions preserved 
 **Verdict:** APPROVED (maintainer, 2026-07-20) — posture recorded; employer-IP
 deferred by maintainer choice.
 
+## D-21 — Strategic framing: why we build, what success means, how we position
+
+**Decision (maintainer + cofounder, 2026-07-20 — after the S-05 askmesh autopsy
+cleared the go/no-go):** the honest framing the whole project now runs on.
+
+**Why we build it (stated plainly, no market-pull pretense).** Direct demand is
+unproven, not disproven (askmesh, the one prior attempt, was never launched —
+`docs/research/askmesh-autopsy.md`). We build anyway, for three legitimate
+reasons: (1) it is an excellent testbed for this repo's agent-pipeline
+experiment (Fable planning, Sonnet subagents building it WP-by-WP); (2) it is a
+flagship that demonstrates real rigor — the verified research trail, threat
+model, and decision log are portfolio-grade regardless of stars; (3) it is a
+cheap option on a category that may matter in ~2 years, with a high-salvage
+pivot (approval-gateway) if it doesn't.
+
+**Definition of success (non-numeric, binding).** Success = "shipped a rigorous,
+secure, genuinely useful tool that a real team (Kosmoy) uses, learned to build
+via the agent pipeline, and handled scrutiny well." Explicitly **not** stars or
+revenue — the research is honest that those are a low-probability tail (D-19,
+D-20). If a number ever becomes the felt measure of success, that is the signal
+to revisit scope, not to push harder.
+
+**Positioning (sharpens D-15/C2).** Lead the demo and the pitch with the
+**answering-side moat**: the colleague's AI answers from inside their *live
+local session* — uncommitted code, terminal state, private repos — which no
+shared channel bot or org assistant can reach. That is the "oh" moment. The
+memorable hook ("Your AI can ask my AI") stays; the moat surfaces
+(cross-vendor, cross-org, self-hosted, approval-as-product) remain the subtitle.
+
+**Wedge (elevates D-19/C3).** Same-owner cross-machine messaging (your own agents
+across your machines) is promoted from "documented day-one scenario" to a
+**candidate front door**: it is the only flavor with demonstrated demand (the
+#28300 cluster, mcp_agent_mail) and it makes first-run useful before any
+teammate replies — directly softening the cold-start hazard (R-11). Cross-person
+is the differentiating superset. Which of the two leads the public launch is a
+Phase-7+ call to make with the working tool in hand.
+
+**Differentiation from askmesh (the "different problem, same core" the maintainer
+asked for).** askmesh automates answering (closed Claude-only cloud, no
+inbound-trust model); askrelay makes **consented, safe, cross-vendor asking**
+the product. Same core mechanic, opposite center of gravity. Used in docs, never
+as public comparison marketing (nobody knows askmesh).
+
+**Top operating commitment.** Above release cadence, above everything: fast,
+non-dismissive security-vulnerability response. For a consent/approval product, a
+slow or defensive answer to a consent-bypass report is the one outcome that
+actively damages the maintainer's reputation in the exact dimension the flagship
+showcases. This outranks the other C7 commitments.
+
+**Verdict:** APPROVED (maintainer, 2026-07-20) — "I agree with you on everything."
+
 ## Open action items from Phase 2 (feed the plan/checklist in Phase 4)
 
 - Ask Anthropic (channel named on their legal page) whether human-approved relay
