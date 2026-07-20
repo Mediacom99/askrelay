@@ -115,6 +115,34 @@ traffic on wet-cement isolation code; Asana MCP cautionary tale); (c) never
 
 **Verdict:** APPROVED (maintainer, 2026-07-15)
 
+**Revision 2026-07-19 (commercialization-posture review — substance UNCHANGED,
+guardrails added). Evidence: `docs/research/commercial-timing-effects.md`,
+`commercial-hosted-economics.md`.** Four additions:
+
+1. **Hard quotas from day one** — small per-org daily message caps, short message
+   TTLs, rate limits, enforced at launch, not retrofitted. Cautionary precedent
+   for a relay-shaped free service: ntfy's free hosted relay reached ~25,000
+   daily users, converted 20 to paid, and had to retreat quotas from 17k to 250
+   msgs/day against entrenched expectations. Hosted-tier expectations lock at
+   public launch and cannot be walked back.
+2. **Written launch framing** (README + hosted-instance page): "Self-hosting is
+   free forever. This hosted instance is a quota-capped demo that MAY become a
+   paid tier." Verified: stating paid intent at day one cost adoption nowhere
+   (Plausible, n8n); backlash attaches only to dishonest labeling / retroactive
+   enclosure (n8n, MinIO, Caddy, Cal.com). **No pricing is published** — category
+   WTP is undemonstrated, and a price would precede (and prejudice) any future
+   employer-IP/duty-of-loyalty review.
+3. **WP-16 built paid-tier-READY** — multi-tenancy boundaries, per-org quota
+   hooks, billing seams stubbed, billing-neutral config — but **no billing,
+   invoicing, or SLA goes live**. At the modal outcome a live tier earns
+   ~€0–200/month against real ops burden.
+4. **Pre-registered trigger to revisit paid hosting:** sustained multi-team
+   organic usage of the free instance (25+ active external, non-Kosmoy orgs) or a
+   first unsolicited purchase request, whichever comes first. Until then the
+   first-dollar path is sponsorship/GitHub Sponsors, not hosting invoices.
+
+**Verdict:** APPROVED (maintainer, 2026-07-20) — adopted as drafted.
+
 ## D-09 — Stack: Go everywhere in v1; the challenged default survives
 
 **Decision:** Go for relay and daemon (settled by D-07 + stack-fitness.md: official
@@ -179,6 +207,52 @@ clients (kept as documented fallback, not taken); (c) undecided (rejected — bl
 outside contributions).
 
 **Verdict:** APPROVED (maintainer, 2026-07-15)
+
+**Revision 2026-07-19 (commercialization-posture review — decision UNCHANGED,
+recorded premise corrected, fallback retired). Evidence:
+`docs/research/commercial-license-mechanics.md`, `commercial-posture-verdict.md`.**
+
+The original verdict was given "knowing DCO makes the license effectively
+immutable at first outside contribution." Live-verified license mechanics
+**invert** that premise. Apache-2.0 §2 grants every licensee — including the
+maintainer — a perpetual, irrevocable right to sublicense and to distribute
+derivative works under different terms (§4 requires only notice retention), and
+FSF/ASF confirm one-way Apache-2.0 → (A)GPLv3 compatibility. So even after
+external DCO contributions, **future versions can lawfully move to AGPL, BSL,
+open-core, or proprietary without contributor consent** (executed precedent:
+Synapse, DCO-only, Apache→AGPL Dec 2023; MinIO 2021 — no consent campaign, no
+litigation). What locks irrevocably — at first *publication*, cemented
+line-by-line thereafter — is only *exclusivity*: every published line stays
+Apache-2.0 for everyone forever, so any later restrictive pivot competes against
+its own free fork, and anyone (a cloud vendor, or Kosmoy) may host askrelay
+commercially. Recorded caveat: no court has ruled on unilateral Apache→AGPL
+forward relicensing; this rests on license text plus settled practice.
+
+Option (b), the AGPL-relay fallback, is hereby **RETIRED**. It is the *only*
+direction that genuinely hard-locks — AGPL-inbound with DCO forecloses returning
+to permissive or selling proprietary exceptions without unanimous consent or
+rewrite (Element added a CLA at its switch for exactly this reason), so it was
+only ever exercisable before the first external contribution. Not worth
+exercising: AGPL carries documented enterprise-adoption friction (Google's hard
+ban, CNCF's Apache-2.0 default) fatal to a category-creation tool that must
+spread frictionlessly inside companies, and would not stop the realistic clone
+vector — clean-room reimplementation of an open protocol (Vaultwarden,
+DocumentDB). Apache-2.0 + DCO + no CLA is therefore the *option-maximizing*
+posture: paid hosting, maintainer-authored closed add-ons (Sidekiq/Caddy pattern,
+separate repos), and Element-playbook forward relicensing of future versions all
+remain available indefinitely; the binding relicensing clock is social (cost
+scales with community size), not legal.
+
+Wording constraints carried forward: the GOVERNANCE.md no-relicense pledge stays,
+phrased as a **binding promise** ("the relay core stays Apache-2.0"), never as
+structural impossibility — the candidate README line "no CLA means we structurally
+cannot pull a Cal.com" is false under Apache inbound (and its Cal.com premise
+failed primary-source verification: Cal.com's core was AGPL without a CLA); it
+must not ship. Where the docs assert license mechanics, cite primary sources
+(Apache-2.0 §2/§4, FSF/ASF compatibility pages, Synapse v1.48 contributing guide,
+Element relicensing announcement), not research-brief URLs.
+
+**Verdict:** APPROVED (maintainer, 2026-07-20) — adopted as drafted.
 
 ## D-14 — Repo home: personal account now, neutral org after Kosmoy adoption
 
@@ -292,6 +366,42 @@ changes together afterwards."
 - C10 planning-hygiene corrections — **N/A**: no governing doc cites the
   corrected figures; corrections live in the market briefs' verification
   sections.
+
+## D-20 — Commercialization posture: pure OSS now, paid-tier optionality preserved
+
+**Decision:** askrelay stays **Apache-2.0 pure OSS** with a free, quota-capped
+hosted demo (D-13 and D-08 as revised 2026-07-19). Open-core-with-pricing-now and
+proprietary are both **rejected**: verified willingness-to-pay in the exact
+category is zero (BAND, the only direct competitor with $17M seed, has no published
+pricing and no named customers; HumanLayer abandoned its approval *API* for a
+per-seat IDE — approval-gating reads as a feature, not a purchasable product), and
+at the modal outcome a paid tier earns ~€0 while spending the project's two real
+assets: the flagship-OSS goal and the trust story of a consent/security product.
+Because Apache-2.0 inbound preserves every future posture (paid hosted tier,
+maintainer-authored closed add-ons in separate repos, Element-playbook forward
+relicensing of future versions — see the D-13 revision), **deferring the
+commercial decision is legally free**; the clocks that bind early are social
+(D-08 launch framing), not licensing.
+
+**Options considered:** (a) pure OSS + paid-tier-ready seams — CHOSEN; (b) AGPL-
+relay split now (rejected/retired with the D-13 revision); (c) open-core with
+published pricing at launch (rejected — prices an undemonstrated product; its two
+sound elements, hard quotas and honest "may become paid" framing, are absorbed
+into the D-08 revision); (d) proprietary (rejected — nothing to monetize, certain
+trust cost for a consent product).
+
+**Employer-IP / entity questions — DEFERRED (maintainer, 2026-07-20):** the
+research flagged Italian employer-IP (art. 12-bis) and ownership/entity structure
+as items to settle before launch. The maintainer has parked these for a later
+dedicated pass ("we'll figure it out later"); they are **not** committed as
+decision or checklist gates here. Single risk flag retained for that future pass:
+if a Kosmoy colleague contributes before the employer-IP question is settled, the
+default assignment rule could complicate provenance — worth resolving before, not
+after, first colleague contributions. Full analysis and draft actions preserved in
+`docs/research/commercial-entity-sponsor.md` and `commercial-posture-verdict.md`.
+
+**Verdict:** APPROVED (maintainer, 2026-07-20) — posture recorded; employer-IP
+deferred by maintainer choice.
 
 ## Open action items from Phase 2 (feed the plan/checklist in Phase 4)
 

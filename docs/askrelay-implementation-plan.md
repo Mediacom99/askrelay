@@ -452,6 +452,17 @@ Gate 0 fully checked (the §2 checklist-condition rule; D-08) ·
 contact + takedown path, terms page, backup/rotation runbook. Exit = the
 public "try it in 60 seconds" relay of D-08/D-16.
 
+**Paid-tier-ready, not paid (D-08 revision 2026-07-19):** enforce hard quotas
+from day one — small per-org daily message caps, short message TTLs, rate
+limits (the ntfy expectation-lock is the cautionary tale for a relay-shaped
+free service). Build the tenancy/quota/billing *seams* — per-org isolation
+boundaries, quota hooks, billing-neutral config, stubbed billing interface —
+but ship **no** live billing, invoicing, or SLA. The hosted-instance page and
+README carry the framing "self-hosting is free forever; this instance is a
+quota-capped demo that MAY become a paid tier"; no pricing is published.
+Revisit paid hosting only on the pre-registered trigger (25+ active external
+non-Kosmoy orgs, or a first unsolicited purchase request).
+
 ## 7. Learnings log
 
 *(append-only; every entry names the WPs it changed)*

@@ -28,12 +28,16 @@ implements their launch-adjacent items.
 - [ ] README front door + threat-model doc + per-client setup guides shipped
       (WP-15); honest client matrix from arch §9 (condensed is fine — the
       architecture table is authoritative).
-- [ ] Kosmoy legal settled: owner-of-record for copyright/trademark named;
-      employer-IP terms for contributors documented in CONTRIBUTING.md
-      (oss-licensing.md; Phase 2 action item — must land before the first
-      external PR, since DCO presupposes it).
-- [ ] Hosted demo relay hardened and live (WP-16): rate limits, isolation
-      audit, AUP, abuse contact (D-08).
+- [ ] Employer-IP / ownership: **deferred by maintainer (D-20)** — parked for a
+      later dedicated pass, not a launch gate. Single flag to honor: settle it
+      before a Kosmoy colleague's first contribution, not after. Analysis kept
+      in `research/commercial-entity-sponsor.md`.
+- [ ] Hosted demo relay hardened and live (WP-16): hard quotas from day one
+      (per-org daily caps, short TTLs, rate limits), isolation audit, AUP,
+      abuse contact; paid-tier seams built but no live billing (D-08 rev).
+- [ ] Hosted-instance page + README carry the D-08 framing: "self-hosting is
+      free forever; this instance is a quota-capped demo that MAY become a paid
+      tier." No pricing published.
 - [ ] Release pipeline proven: tagged pre-release built by GoReleaser; brew
       tap, npm wrapper, docker image all install on a clean machine (D-09,
       WP-14).
@@ -75,6 +79,10 @@ implements their launch-adjacent items.
 - [ ] Revisit squatted `askrelay.com` (negotiate or ignore — D-18/R-08).
 - [ ] v1.1 planning gate: unattended auto-reply only if the Anthropic answer
       permits it (D-03, R-03).
+- [ ] Paid-hosting revisit trigger (D-08 rev / D-20): only on 25+ active
+      external non-Kosmoy orgs on the free instance, or a first unsolicited
+      purchase request. Until then, first-dollar path is sponsorship / GitHub
+      Sponsors — never hosting invoices.
 - [ ] Kosmoy paid-maintenance-hours conversation, once dogfooding has proven
       value (D-19/C8 — "ask later").
 - [ ] Recruit 2–3 cross-org tester pairs (OSS co-maintainers, contractor/

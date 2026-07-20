@@ -105,12 +105,13 @@ decided design — they go live with the first release.)
 
 ## Contributing
 
-Apache-2.0, [DCO](https://developercertificate.org/) sign-off, **no CLA** —
-and that's a promise, not a placeholder: the license doesn't move. The project
-is built plan-first: work packages, dependency pins, and the session protocol
-are in the [implementation plan](docs/askrelay-implementation-plan.md). Issues
-and design discussion are welcome now; code PRs make sense once WP-01 (the
-first work package — the signed envelope library) lands.
+Apache-2.0, [DCO](https://developercertificate.org/) sign-off, **no CLA**. And
+a plain promise, kept in [GOVERNANCE](docs/), that we mean rather than merely
+license our way into: **the relay core stays Apache-2.0.** The project is built
+plan-first: work packages, dependency pins, and the session protocol are in the
+[implementation plan](docs/askrelay-implementation-plan.md). Issues and design
+discussion are welcome now; code PRs make sense once WP-01 (the first work
+package — the signed envelope library) lands.
 
 askrelay's first users are the team at [Kosmoy](https://www.kosmoy.com) —
 built in the open from day one.
