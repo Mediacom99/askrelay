@@ -13,7 +13,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 
 | WP | Package | Status | Depends on | Gated by |
 |---|---|---|---|---|
-| WP-01 | `internal/envelope` — signed envelope | TODO | — | T-01 T-02 S-05 ✓ |
+| WP-01 | `internal/envelope` — signed envelope | IN_PROGRESS | — | T-01 T-02 S-05 ✓ |
 | WP-02 | `internal/gate` — approval/grant state machine | TODO | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | TODO | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
