@@ -51,12 +51,14 @@ T-entry may not start until it is APPROVED.
 
 askrelay is built by a **planner + subagent pipeline**: the main session
 (Fable) plans and orchestrates; Sonnet subagents in `.claude/agents/` do the
-labor. Roles: `askrelay-dev` (implements one WP), `askrelay-test`
-(independently exercises the WP against its test plan — writes the tests the
-dev agent didn't think of), `askrelay-review` (fresh-context diff review
-against the WP entry + cited architecture sections). The roster files define
-each role's contract; **creating the roster is a prerequisite to WP-01** — no
-implementation session starts before `.claude/agents/` exists.
+labor. Roles (defined in `.claude/agents/`, created 2026-07-22): `askrelay-dev`
+(implements one WP), `askrelay-test` (independently exercises the WP against its
+test plan — writes the tests the dev agent didn't think of), `askrelay-review`
+(fresh-context diff review against the WP entry + cited architecture sections),
+and `askrelay-security` (adversarial red-team lens, run on security-touching WPs
+— envelope, gate, oauth, mcp, daemon, retention). Each agent's file is its
+contract. Recommended effort: `xhigh` for dev and security, `high` for test and
+review.
 
 **For every implementation session:**
 
@@ -71,8 +73,10 @@ implementation session starts before `.claude/agents/` exists.
 3. Set Status `IN_PROGRESS` in §1 and commit the edit (claim marker).
 4. Orchestrate: `askrelay-dev` implements exactly what the entry says →
    `askrelay-test` runs the full test plan and adds adversarial tests →
-   `askrelay-review` reviews the diff against entry + architecture §§. The
-   planner fixes or loops agents until all three pass.
+   `askrelay-review` reviews the diff against entry + architecture §§ →
+   `askrelay-security` red-teams it when the WP touches signatures, approval
+   state, tokens, untrusted content, secrets, or auth. The planner fixes or
+   loops agents until all applicable passes are clean.
 5. Add dependencies **only** at §3 pins, only when first imported
    (`go get module@pin`).
 6. Green bar before PR: `make build && make test && make lint && go vet ./...`
@@ -92,10 +96,11 @@ implementation session starts before `.claude/agents/` exists.
 ```
 Read CLAUDE.md, then docs/askrelay-implementation-plan.md. Following its §2
 protocol, pick the next eligible work package, set it IN_PROGRESS, and drive
-the askrelay-dev / askrelay-test / askrelay-review agents through it per its
-entry and the architecture sections it cites. Green bar, status board update,
-learnings, one PR. One package only. If nothing is eligible, report exactly
-what blocks.
+the askrelay-dev / askrelay-test / askrelay-review agents (plus askrelay-security
+if the WP touches signatures, approval state, tokens, untrusted content,
+secrets, or auth) through it per its entry and the architecture sections it
+cites. Green bar, status board update, learnings, one PR. One package only. If
+nothing is eligible, report exactly what blocks.
 ```
 
 **Maintainer workflow:** review §5 T-entries, append APPROVED/VETOED (+reason).

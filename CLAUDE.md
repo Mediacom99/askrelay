@@ -28,9 +28,13 @@ the first users; OSS (Apache-2.0 + DCO, no CLA) from day one.
 - **Implementation sessions follow the plan's §2 protocol** — one work
   package per session, status board as claim marker, learnings appended. The
   copy-paste kickoff prompt is in that section.
-- The pipeline is planner + subagents: the main session orchestrates;
-  `.claude/agents/` defines `askrelay-dev`, `askrelay-test`, and
-  `askrelay-review` roles (created in the roster phase).
+- The pipeline is planner + subagents: the main session (Fable) plans and
+  orchestrates; the Sonnet subagents in `.claude/agents/` do the labor —
+  `askrelay-dev` (implements one WP), `askrelay-test` (independent adversarial
+  test pass), `askrelay-review` (fresh-context diff review), and
+  `askrelay-security` (red-team lens on security-touching WPs: envelope, gate,
+  oauth, mcp, daemon, retention). The orchestrator runs dev → test → review
+  (+ security where it applies) per WP and loops until all pass.
 - `go.mod` intentionally lists no dependencies; `cmd/askrelay/main.go` and the
   `internal/*/doc.go` files are buildable placeholders citing their
   architecture sections. Dependencies enter only at the plan §3 pins, only
