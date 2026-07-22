@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Mediacom99/askrelay/internal/a2a"
 )
 
 func TestVerifyHappyPath(t *testing.T) {
@@ -38,7 +40,7 @@ func TestVerifyTamperMatrix(t *testing.T) {
 		{"from.device", func(e *Envelope) { e.From.Device = "SHA256:evil" }, ErrBadSignature},
 		{"from.agent", func(e *Envelope) { e.From.Agent = "evil-agent" }, ErrBadSignature},
 		{"to", func(e *Envelope) { e.To = "eve" }, ErrBadSignature},
-		{"state", func(e *Envelope) { e.State = StateWorking }, ErrBadSignature},
+		{"state", func(e *Envelope) { e.State = a2a.StateWorking }, ErrBadSignature},
 		{"sent_at", func(e *Envelope) { e.SentAt = e.SentAt.Add(time.Second) }, ErrBadSignature},
 		{"ai_generated", func(e *Envelope) { e.AIGenerated = !e.AIGenerated }, ErrBadSignature},
 		{"body.role", func(e *Envelope) { e.Body.Role = "user" }, ErrBadSignature},
