@@ -17,6 +17,10 @@ var (
 	// ErrIllegalTransition means the verdict is not a legal move from the
 	// current state.
 	ErrIllegalTransition = errors.New("gate: illegal transition")
+	// ErrNoGrant means no active grant covers the approvable, so a human
+	// verdict is required — returned by the grant-driven paths when they
+	// cannot auto-approve.
+	ErrNoGrant = errors.New("gate: no active grant")
 )
 
 // Verdict is a person's decision on an approvable awaiting them. The same two
@@ -127,4 +131,45 @@ func validDraftState(s DraftState) bool {
 	default:
 		return false
 	}
+}
+
+// Grant is a standing, revocable authorization to auto-approve a thread in
+// ONE direction (D-03 inbound, D-11 outbound). The store persists grants as
+// immortal audit rows (WP-03) and owns revocation; the gate treats a Grant
+// as data and never looks one up.
+type Grant struct {
+	Thread    string
+	Direction Direction
+	Revoked   bool
+}
+
+// Covers reports whether g currently auto-approves a: same thread, same
+// direction, not revoked. A grant covers exactly one direction, so an inbound
+// grant never short-circuits an outbound reply and vice versa.
+func (g Grant) Covers(a Approvable) bool {
+	return !g.Revoked && g.Thread == a.Thread && g.Direction == a.Direction
+}
+
+// ApplyInboundGrant auto-approves an inbound message when g covers it — the
+// grant-driven equivalent of a human ApplyInbound(cur, Approve). If g does
+// not cover a, it returns ErrNoGrant and the caller must get a human verdict.
+// The store records the resulting transition as via-grant.
+func ApplyInboundGrant(g Grant, a Approvable, cur a2a.ThreadState) (a2a.ThreadState, error) {
+	if !g.Covers(a) {
+		return "", ErrNoGrant
+	}
+	return ApplyInbound(cur, Approve)
+}
+
+// ApplyOutboundGrant auto-releases a drafted reply when g covers it, minting a
+// Release marked ViaGrant. If g does not cover a, it returns ErrNoGrant.
+func ApplyOutboundGrant(g Grant, a Approvable, cur DraftState) (DraftState, *Release, error) {
+	if !g.Covers(a) {
+		return "", nil, ErrNoGrant
+	}
+	st, rel, err := ApplyOutbound(a, cur, Approve)
+	if rel != nil {
+		rel.viaGrant = true
+	}
+	return st, rel, err
 }

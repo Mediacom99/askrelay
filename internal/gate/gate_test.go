@@ -79,3 +79,70 @@ func TestApplyOutbound(t *testing.T) {
 		})
 	}
 }
+
+func TestGrantCovers(t *testing.T) {
+	in := Approvable{Kind: KindMessage, Direction: Inbound, Thread: "01ABC", Payload: "question"}
+	cases := []struct {
+		name  string
+		grant Grant
+		want  bool
+	}{
+		{"covers own thread and direction", Grant{Thread: "01ABC", Direction: Inbound}, true},
+		{"other direction is not covered", Grant{Thread: "01ABC", Direction: Outbound}, false},
+		{"other thread is not covered", Grant{Thread: "01XYZ", Direction: Inbound}, false},
+		{"revoked grant covers nothing", Grant{Thread: "01ABC", Direction: Inbound, Revoked: true}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.grant.Covers(in); got != c.want {
+				t.Errorf("Covers = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestApplyInboundGrant(t *testing.T) {
+	in := Approvable{Kind: KindMessage, Direction: Inbound, Thread: "01ABC", Payload: "question"}
+	g := Grant{Thread: "01ABC", Direction: Inbound}
+
+	got, err := ApplyInboundGrant(g, in, a2a.StateInputRequired)
+	if err != nil {
+		t.Fatalf("covered grant: err = %v, want nil", err)
+	}
+	if got != a2a.StateWorking {
+		t.Errorf("state = %q, want %q", got, a2a.StateWorking)
+	}
+
+	if _, err := ApplyInboundGrant(Grant{Thread: "01XYZ", Direction: Inbound}, in, a2a.StateInputRequired); !errors.Is(err, ErrNoGrant) {
+		t.Errorf("uncovered grant: err = %v, want ErrNoGrant", err)
+	}
+	if _, err := ApplyInboundGrant(g, in, a2a.StateWorking); !errors.Is(err, ErrIllegalTransition) {
+		t.Errorf("covered grant from working: err = %v, want ErrIllegalTransition", err)
+	}
+}
+
+func TestApplyOutboundGrant(t *testing.T) {
+	out := Approvable{Kind: KindMessage, Direction: Outbound, Thread: "01ABC", Payload: "reply-body"}
+	g := Grant{Thread: "01ABC", Direction: Outbound}
+
+	st, rel, err := ApplyOutboundGrant(g, out, PendingReview)
+	if err != nil {
+		t.Fatalf("covered grant: err = %v, want nil", err)
+	}
+	if st != Sent {
+		t.Errorf("state = %q, want %q", st, Sent)
+	}
+	if rel == nil {
+		t.Fatal("covered grant must mint a release")
+	}
+	if !rel.ViaGrant() {
+		t.Error("grant-minted release must report ViaGrant() == true")
+	}
+
+	if _, rel, err := ApplyOutboundGrant(Grant{Thread: "01ABC", Direction: Inbound}, out, PendingReview); !errors.Is(err, ErrNoGrant) || rel != nil {
+		t.Errorf("inbound grant on outbound draft: err = %v, rel = %v; want ErrNoGrant, nil", err, rel)
+	}
+	if _, rel, err := ApplyOutboundGrant(g, out, Sent); !errors.Is(err, ErrIllegalTransition) || rel != nil {
+		t.Errorf("covered grant from sent: err = %v, rel = %v; want ErrIllegalTransition, nil", err, rel)
+	}
+}
