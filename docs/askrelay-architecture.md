@@ -125,8 +125,15 @@ so a future A2A bridge is a thin adapter.
   bodies (§4.2), and envelopes whose `sent_at` falls outside the retention
   window are rejected outright. A valid signature proves origin — the system
   never infers intent or safety from it (D-10).
-- **Size caps**: 32 KiB body per message (fits "question + code snippet",
-  starves exfil-by-bulk); relay rejects larger with a clear error.
+- **Size caps (whole-artifact — T-16)**: three limits enforced inside the
+  envelope type, in the same path as Sign/Verify, so a signed envelope is
+  bounded by construction and every consumer inherits the bound: text body
+  ≤ 32 KiB (`MaxBodyBytes`, fits "question + code snippet"), whole canonical
+  envelope ≤ 64 KiB (`MaxWireBytes`, so metadata/label bloat can't smuggle
+  bulk), and ≤ 16 parts (`MaxParts`, so part-count can't). Together these
+  starve exfil-by-bulk (the earlier text-only cap did not — a signed 4.2 MB
+  envelope was demonstrable). The relay additionally caps raw read size at
+  ingress (§4.5, WP-03/WP-07) as defense-in-depth.
 
 ## 4. Relay
 
@@ -138,6 +145,14 @@ Tables (full schema in the plan's WPs): `persons`, `devices` (pubkey, label,
 state), `messages` (envelope blob, per-recipient delivery/ack state),
 `grants` (thread × person × direction, `granted_at`, `revoked_at` — never
 deleted, they are the audit log), `oauth_*` (clients, codes, tokens).
+
+**Canonical-form invariant (cross-WP, from the WP-01 security review):** the
+`messages` envelope blob stores the **canonical form** (or the re-marshaled
+decoded struct) — **never the raw received wire bytes**. A signature
+authenticates the canonical projection of the *decoded* struct, not the wire;
+persisting raw wire would invite a later consumer to read content with a
+different parser and diverge from what was verified. Every consumer must
+`Decode` → `Verify` → read content only from the decoded struct.
 
 ### 4.2 Ephemeral retention (D-10)
 
