@@ -58,6 +58,13 @@ the first users; OSS (Apache-2.0 + DCO, no CLA) from day one.
 - Relay never sees vendor credentials; never drive a consumer web session
   (vendor ToS).
 - Go 1.26, `CGO_ENABLED=0` everywhere; single-binary distribution.
+- Errors (T-17): exported sentinel values matched with `errors.Is`; propagate by
+  wrapping `fmt.Errorf("<pkg>: …: %w", err)`; zero-value+error, never both; panic
+  only for unrecoverable faults. Pure core (`a2a`/`envelope`/`gate`) returns
+  errors and never logs; only boundaries log. Remote-facing errors are sanitized.
+- Logging (T-15/T-18): `slog` only; NEVER log content, secrets, keys, tokens, or
+  PII — ids and shapes only; structured fields (not formatted strings); log at
+  boundaries; security refusals at `Warn` without the offending content.
 
 ## Common commands
 

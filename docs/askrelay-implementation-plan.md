@@ -45,8 +45,9 @@ Spikes (timeboxed, produce a Learnings entry + possibly decision revisions):
 Product D-01..D-18: all APPROVED (see phase2-decision-log.md). Technical
 T-01..T-15: all **APPROVED** (maintainer, 2026-07-16 — walked through and
 approved one by one). T-16 (whole-artifact size caps) APPROVED 2026-07-22 from
-the WP-01 test pass. Future T-entries start as PROPOSED; WPs gated on a T-entry
-may not start until it is APPROVED.
+the WP-01 test pass. T-17 (error-handling convention) + T-18 (logging policy)
+APPROVED 2026-07-23 — cross-cutting, bind every WP from WP-03 on. Future
+T-entries start as PROPOSED; WPs gated on a T-entry may not start until APPROVED.
 
 ## 2. Execution protocol (maintainer-supervised)
 
@@ -229,6 +230,32 @@ reference and bind every WP.
   bloat, which contradicted arch §3/§8's exfil-mitigation claim. Relay ingress
   (WP-03/WP-07) still adds a raw-read cap as defense-in-depth.
   *APPROVED (maintainer, 2026-07-22 — WP-01 test pass finding).*
+- **T-17 — Error-handling convention (ratifies the WP-01/WP-02 style, made
+  binding).** Sentinel error *values* (`errors.New`, exported `ErrXxx`) for
+  outcomes callers branch on, matched with `errors.Is`; typed errors only when a
+  caller needs structured data out of the error. Propagate by wrapping:
+  `fmt.Errorf("<pkg>: <context>: %w", err)` — `%w` preserves the chain, the
+  `<pkg>:` prefix makes origin legible. Return zero value + error, never both.
+  Panic only for unrecoverable faults (e.g. CSPRNG failure, cf. `uuid.Must`),
+  never for expected runtime conditions. The pure core packages (`a2a`,
+  `envelope`, `gate`) never log — they return errors; only the boundary layers
+  (relay handlers, daemon, CLI, sweeper) log. Errors crossing to a remote MCP
+  client are sanitized (no internal detail or content leaks); the client-facing
+  error taxonomy is decided at WP-07, not now (boundary-errors fork —
+  sentinels-sanitized-at-boundary chosen, structured codes deferred).
+  *APPROVED (maintainer, 2026-07-23).*
+- **T-18 — Logging policy (mechanism per T-15: `slog`, JSON on relay / text on
+  daemon).** NEVER log message bodies/content, secrets, tokens, invite links,
+  private keys, or PII — log identifiers and shapes only (thread id, message id,
+  state, byte counts, error kind). Structured fields, not formatted strings
+  (`slog.String("thread", id)`), so a secret cannot be accidentally interpolated
+  into a message. Levels: `Error` (real failure), `Warn` (recoverable/suspicious
+  — signature reject, over-cap envelope, gate refusal, revoked-device attempt),
+  `Info` (lifecycle: startup, enrollment, delivery), `Debug` (dev builds only,
+  `-tags dev` per T-13). Security-relevant refusals are logged at `Warn` WITHOUT
+  the offending content; the durable consent audit trail (grant/approval rows)
+  lives in the store (WP-03), not in logs. Logging happens only at boundaries
+  (T-17). *APPROVED (maintainer, 2026-07-23).*
 
 ## 6. Work packages
 
