@@ -9,10 +9,11 @@ import (
 // Sentinel errors from the gate's transition functions. Callers branch on these
 // with errors.Is; they are the gate's whole vocabulary of refusal.
 var (
-	// ErrUnknownState means the supplied current state is not one of the seven
-	// A2A states. The gate refuses rather than guesses — the F3 guard: a state
-	// it does not recognize is never a basis for a transition.
-	ErrUnknownState = errors.New("gate: unknown thread state")
+	// ErrUnknownState means the supplied current state is not one the gate
+	// recognizes — an A2A thread state (ApplyInbound) or a draft state
+	// (ApplyOutbound). The gate refuses rather than guesses — the F3 guard: a
+	// state it does not recognize is never a basis for a transition.
+	ErrUnknownState = errors.New("gate: unknown state")
 	// ErrIllegalTransition means the verdict is not a legal move from the
 	// current state.
 	ErrIllegalTransition = errors.New("gate: illegal transition")
@@ -65,6 +66,63 @@ func validState(s a2a.ThreadState) bool {
 	switch s {
 	case a2a.StateSubmitted, a2a.StateWorking, a2a.StateInputRequired,
 		a2a.StateCompleted, a2a.StateFailed, a2a.StateCanceled, a2a.StateRejected:
+		return true
+	default:
+		return false
+	}
+}
+
+// Release is proof that an outbound reply cleared the approval gate. Only
+// ApplyOutbound(..., Approve) mints one; the delivery layer (WP-08) requires a
+// non-nil *Release to transmit. Its fields are unexported and it has no other
+// constructor, so a reply cannot be delivered without having passed the gate —
+// the guarantee is on the act of sending, not the "sent" label.
+type Release struct {
+	thread   string
+	payload  any
+	viaGrant bool
+}
+
+// Thread reports the thread this release belongs to.
+func (r *Release) Thread() string { return r.thread }
+
+// Payload reports the approved payload (the envelope in v1).
+func (r *Release) Payload() any { return r.payload }
+
+// ViaGrant reports whether the release came from a standing grant rather than a
+// fresh human tap. It is set by the grant path (subtask 4); a manual approval
+// leaves it false.
+func (r *Release) ViaGrant() bool { return r.viaGrant }
+
+// ApplyOutbound applies a person's verdict to a drafted reply and returns the
+// draft state it moves to. It is legal only from PendingReview: Approve mints a
+// Release (the capability the delivery layer requires to transmit) and moves the
+// draft to Sent; Reject moves it to Discarded and mints nothing.
+//
+// cur MUST be the store's authoritative draft state, never a value derived from
+// untrusted input — the same discipline ApplyInbound applies to thread state.
+func ApplyOutbound(a Approvable, cur DraftState, v Verdict) (DraftState, *Release, error) {
+	if !validDraftState(cur) {
+		return "", nil, ErrUnknownState
+	}
+	if cur != PendingReview {
+		return "", nil, ErrIllegalTransition
+	}
+	switch v {
+	case Approve:
+		return Sent, &Release{thread: a.Thread, payload: a.Payload}, nil
+	case Reject:
+		return Discarded, nil, nil
+	default:
+		return "", nil, ErrIllegalTransition
+	}
+}
+
+// validDraftState reports whether s is one of the three draft states. Mirrors
+// validState: unknown input is refused, never guessed.
+func validDraftState(s DraftState) bool {
+	switch s {
+	case PendingReview, Sent, Discarded:
 		return true
 	default:
 		return false

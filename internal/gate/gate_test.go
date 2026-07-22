@@ -37,3 +37,45 @@ func TestApplyInbound(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyOutbound(t *testing.T) {
+	sample := Approvable{Kind: KindMessage, Direction: Outbound, Thread: "01ABC", Payload: "reply-body"}
+	cases := []struct {
+		name    string
+		current DraftState
+		verdict Verdict
+		want    DraftState
+		wantRel bool
+		wantErr error
+	}{
+		{"approve from pending mints a release", PendingReview, Approve, Sent, true, nil},
+		{"reject from pending mints nothing", PendingReview, Reject, Discarded, false, nil},
+		{"approve from sent is illegal", Sent, Approve, "", false, ErrIllegalTransition},
+		{"reject from discarded is illegal", Discarded, Reject, "", false, ErrIllegalTransition},
+		{"unknown state is refused", DraftState("made-up"), Approve, "", false, ErrUnknownState},
+		{"empty state is refused", DraftState(""), Approve, "", false, ErrUnknownState},
+		{"bogus verdict is refused", PendingReview, Verdict("maybe"), "", false, ErrIllegalTransition},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, rel, err := ApplyOutbound(sample, c.current, c.verdict)
+			if !errors.Is(err, c.wantErr) {
+				t.Fatalf("err = %v, want %v", err, c.wantErr)
+			}
+			if got != c.want {
+				t.Errorf("state = %q, want %q", got, c.want)
+			}
+			if (rel != nil) != c.wantRel {
+				t.Fatalf("release present = %v, want %v", rel != nil, c.wantRel)
+			}
+			if rel != nil {
+				if rel.Thread() != sample.Thread || rel.Payload() != sample.Payload {
+					t.Errorf("release carries wrong data: thread=%q payload=%v", rel.Thread(), rel.Payload())
+				}
+				if rel.ViaGrant() {
+					t.Error("manual approval must not be marked via_grant")
+				}
+			}
+		})
+	}
+}
