@@ -437,6 +437,11 @@ retention sweeper goroutine wired to T-09 knobs.
 
 **Dependency added:** `github.com/coder/websocket v1.8.15`.
 
+**Security note (WP-02 surface sweep):** delivery MUST match
+`gate.Release.Thread()` (and payload) against the message it transmits — a
+non-nil `*Release` alone is forgeable as an inert `new(gate.Release)` (empty
+thread, nil payload); pinned by `internal/gate/surface_test.go`.
+
 **Test plan:** kill/reconnect matrix (nothing lost, nothing duplicated beyond
 at-least-once + id dedupe); ack bookkeeping vs sweeper; revocation severs live
 sockets.

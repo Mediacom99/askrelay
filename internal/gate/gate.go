@@ -145,9 +145,10 @@ type Grant struct {
 
 // Covers reports whether g currently auto-approves a: same thread, same
 // direction, not revoked. A grant covers exactly one direction, so an inbound
-// grant never short-circuits an outbound reply and vice versa.
+// grant never short-circuits an outbound reply and vice versa. A zero-value
+// or thread-less grant covers nothing.
 func (g Grant) Covers(a Approvable) bool {
-	return !g.Revoked && g.Thread == a.Thread && g.Direction == a.Direction
+	return !g.Revoked && g.Thread != "" && g.Thread == a.Thread && g.Direction == a.Direction
 }
 
 // ApplyInboundGrant auto-approves an inbound message when g covers it — the
