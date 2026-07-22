@@ -1,6 +1,6 @@
 ---
 name: askrelay-test
-description: Independently exercises a completed askrelay work package against its test plan AND writes the adversarial tests the implementer didn't think of. Use after askrelay-dev finishes a WP, before review. Its job is to break the code, not to confirm it works.
+description: Independently exercises a completed askrelay work package against its test plan AND writes the adversarial tests the implementer didn't think of. Use after a WP is implemented (maintainer-supervised, in the main session), before review. Its job is to break the code, not to confirm it works.
 model: sonnet
 ---
 

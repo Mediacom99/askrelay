@@ -25,16 +25,20 @@ the first users; OSS (Apache-2.0 + DCO, no CLA) from day one.
 
 ## How work happens here
 
-- **Implementation sessions follow the plan's §2 protocol** — one work
-  package per session, status board as claim marker, learnings appended. The
-  copy-paste kickoff prompt is in that section.
-- The pipeline is planner + subagents: the main session (Fable) plans and
-  orchestrates; the Sonnet subagents in `.claude/agents/` do the labor —
-  `askrelay-dev` (implements one WP), `askrelay-test` (independent adversarial
-  test pass), `askrelay-review` (fresh-context diff review), and
-  `askrelay-security` (red-team lens on security-touching WPs: envelope, gate,
-  oauth, mcp, daemon, retention). The orchestrator runs dev → test → review
-  (+ security where it applies) per WP and loops until all pass.
+- **Work is maintainer-supervised (D-22)** — follow the plan's §2 protocol. The
+  main session (Fable) plans and implements *in dialogue with the maintainer*,
+  who supervises every step and must understand every line. Per WP: divide it
+  into small logical subtasks; for each subtask, explain what/why/Go-idioms and
+  show the proposed code, **wait for the maintainer's confirmation, then write
+  it** — never write ahead of confirmation. The copy-paste kickoff prompt is in
+  §2.
+- Implementation is **not** delegated to an autonomous agent (that hides the
+  reasoning the maintainer needs to see). The Sonnet subagents in
+  `.claude/agents/` are an **independent quality pass, run once per WP after all
+  subtasks are assembled**: `askrelay-test` (adversarial), `askrelay-review`
+  (fresh-context), `askrelay-security` (red-team on security-touching WPs).
+  Their findings return to the maintainer for a fix decision. (`askrelay-dev`
+  was retired at D-22.)
 - `go.mod` intentionally lists no dependencies; `cmd/askrelay/main.go` and the
   `internal/*/doc.go` files are buildable placeholders citing their
   architecture sections. Dependencies enter only at the plan §3 pins, only

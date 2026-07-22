@@ -466,3 +466,35 @@ showcases. This outranks the other C7 commitments.
   contributors (oss-licensing.md).
 - Verify Kosmoy team's actual ChatGPT plan mix (write-MCP is Business/Enterprise/Edu
   beta; Plus unresolved) before promising the ChatGPT answerer flow (chatgpt-*.md).
+
+## D-22 — Development process: maintainer-supervised, subtask-level implementation
+
+**Decision (maintainer, 2026-07-23):** work packages are no longer implemented
+autonomously by a subagent. Instead the main session (Fable) divides each WP
+into small, logically-coherent subtasks and, for each, **before writing any
+code**, explains what it builds, why this way (alternatives rejected) and the Go
+idioms involved, then shows the proposed code and waits for the maintainer's
+confirmation; only then is it written. Goal: the maintainer is a full supervisor
+and understands the whole codebase as if they wrote it. The three quality agents
+(`askrelay-test`, `askrelay-review`, `askrelay-security`) still run — once per WP
+after all subtasks are assembled — as an independent adversarial pass whose
+findings return to the maintainer. Teaching depth: design rationale + Go idioms,
+assuming fluent code reading.
+
+**Options considered:** (a) main session implements in-conversation, keep the
+quality agents — CHOSEN; (b) drop the quality agents too (rejected — loses the
+independent adversarial passes that already caught T-16 and the WP-01 security
+review); (c) keep a reshaped autonomous-ish dev agent (rejected — indirection
+between maintainer and code defeats the "understand as if I wrote it" goal).
+
+**Consequences:** `askrelay-dev` is **RETIRED** (its autonomous whole-WP role
+contradicts supervision; recoverable from git history). Plan §2 protocol and
+CLAUDE.md rewritten to this model. `askrelay-test`/`-review`/`-security` keep
+their contracts with only the stale "after askrelay-dev" phrasing updated to
+"after the WP is implemented." The prompt-crafting skill was **not** invoked:
+the surviving agents needed only a trivial contextual edit, not a prompt-quality
+rework, so using it would have been ceremony. Applies from **WP-02 onward**;
+WP-01 was the last (and only) autonomous run.
+
+**Verdict:** APPROVED (maintainer, 2026-07-23) — process co-designed via three
+confirmed choices.

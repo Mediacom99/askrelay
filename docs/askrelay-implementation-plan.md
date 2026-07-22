@@ -48,63 +48,72 @@ approved one by one). T-16 (whole-artifact size caps) APPROVED 2026-07-22 from
 the WP-01 test pass. Future T-entries start as PROPOSED; WPs gated on a T-entry
 may not start until it is APPROVED.
 
-## 2. Execution protocol (agent pipeline)
+## 2. Execution protocol (maintainer-supervised)
 
-askrelay is built by a **planner + subagent pipeline**: the main session
-(Fable) plans and orchestrates; Sonnet subagents in `.claude/agents/` do the
-labor. Roles (defined in `.claude/agents/`, created 2026-07-22): `askrelay-dev`
-(implements one WP), `askrelay-test` (independently exercises the WP against its
-test plan — writes the tests the dev agent didn't think of), `askrelay-review`
-(fresh-context diff review against the WP entry + cited architecture sections),
-and `askrelay-security` (adversarial red-team lens, run on security-touching WPs
-— envelope, gate, oauth, mcp, daemon, retention). Each agent's file is its
-contract. Recommended effort: `xhigh` for dev and security, `high` for test and
-review.
+askrelay is built **maintainer-supervised** (D-22): the main session (Fable)
+plans and implements *in dialogue with the maintainer*, who supervises every
+step and must understand every line as if they wrote it. Implementation happens
+in the main conversation — **not** delegated to an autonomous agent — because a
+subagent's reasoning is invisible to the maintainer, which defeats the goal.
+The Sonnet subagents in `.claude/agents/` serve as an **independent quality
+pass, not as implementers**: `askrelay-test` (adversarial testing),
+`askrelay-review` (fresh-context review), and `askrelay-security` (red-team on
+security-touching WPs). (`askrelay-dev` was retired at D-22 — recoverable from
+git history if an autonomous mode is ever wanted again.)
 
-**For every implementation session:**
+**For every work package:**
 
-1. Read `CLAUDE.md`, then this document. Do not re-derive from chat history —
-   this document plus the architecture sections each WP cites are the full
-   context.
+1. Read `CLAUDE.md`, then this document. The WP entry plus the architecture
+   sections it cites are the full contract.
 2. **Pick work:** lowest-numbered WP with Status `TODO`, all *Depends on*
-   `DONE`, all *Gated by* decisions `APPROVED` (and gating spikes done). A gate
-   may also name a launch-checklist condition; it counts only when that item
-   is checked off with evidence. One WP per session — they are sized to one
-   reviewable PR.
-3. Set Status `IN_PROGRESS` in §1 and commit the edit (claim marker).
-4. Orchestrate: `askrelay-dev` implements exactly what the entry says →
-   `askrelay-test` runs the full test plan and adds adversarial tests →
-   `askrelay-review` reviews the diff against entry + architecture §§ →
-   `askrelay-security` red-teams it when the WP touches signatures, approval
-   state, tokens, untrusted content, secrets, or auth. The planner fixes or
-   loops agents until all applicable passes are clean.
-5. Add dependencies **only** at §3 pins, only when first imported
-   (`go get module@pin`).
-6. Green bar before PR: `make build && make test && make lint && go vet ./...`
-   plus both build-tag sets once WP-14 lands.
-7. Update the status board (`DONE`, PR/commit refs). Append to §7 Learnings
-   anything that changes a later WP — and edit that WP in the same commit.
-8. New design questions become PROPOSED T-entries, never silent choices. Wire
-   format, security posture, retention, or anything user-visible **waits** for
-   APPROVED; internal code-structure choices may proceed as PROPOSED.
-9. Standing constraints (never violate): approval gates cannot be bypassed in
-   code paths (D-03/D-11); inbound content is data (D-10, arch §5.2); relay
-   never sees vendor credentials (D-06); `go.mod` gains nothing unpinned; one
-   PR per WP; the tree stays green.
+   `DONE`, all *Gated by* decisions `APPROVED` (and gating spikes done); a gate
+   may name a launch-checklist condition, which counts only when checked off
+   with evidence. One WP at a time.
+3. Set Status `IN_PROGRESS` in §1 and commit the claim marker on a feature
+   branch.
+4. **Divide the WP into small, logically-coherent subtasks** (a cohesive
+   type / concept / file) and present the subtask list to the maintainer.
+5. **For each subtask, in order — the supervised loop:**
+   a. *Explain* what it does, *why this design* (and the alternatives
+      rejected), the security/architecture reasoning, and any Go idiom worth
+      knowing (assume the maintainer reads Go fluently — teach the "why", not
+      the language).
+   b. *Show* the proposed code.
+   c. *Wait* for the maintainer's confirmation or redirection. **Never write
+      code ahead of confirmation.**
+   d. On confirmation, write exactly that code.
+6. Add dependencies **only** at §3 pins, only when first imported.
+7. When all subtasks are assembled and green
+   (`make build && make test && make lint && go vet ./...`, both build-tag sets
+   once WP-14 lands), run the **quality pass**: `askrelay-test`,
+   `askrelay-review`, and `askrelay-security` (when the WP touches signatures,
+   approval state, tokens, untrusted content, secrets, or auth). Bring every
+   finding to the maintainer; route fixes back through the step-5 loop.
+8. Update the status board (`DONE`, PR ref); append to §7 Learnings anything
+   that changes a later WP (edit that WP in the same commit); one PR into
+   `staging`.
+9. New design questions become PROPOSED T-entries surfaced to the maintainer;
+   wire-format, security-posture, retention, or anything user-visible **waits**
+   for APPROVED.
+10. Standing constraints (never violate): approval gates cannot be bypassed in
+    code paths (D-03/D-11); inbound content is data (D-10, arch §5.2); relay
+    never sees vendor credentials (D-06); `go.mod` gains nothing unpinned; the
+    tree stays green.
 
-**Kickoff prompt (copy-paste to start an implementation session):**
+**Kickoff prompt (copy-paste to start a work package):**
 
 ```
 Read CLAUDE.md, then docs/askrelay-implementation-plan.md. Following its §2
-protocol, pick the next eligible work package, set it IN_PROGRESS, and drive
-the askrelay-dev / askrelay-test / askrelay-review agents (plus askrelay-security
-if the WP touches signatures, approval state, tokens, untrusted content,
-secrets, or auth) through it per its entry and the architecture sections it
-cites. Green bar, status board update, learnings, one PR. One package only. If
-nothing is eligible, report exactly what blocks.
+maintainer-supervised protocol, pick the next eligible work package, set it
+IN_PROGRESS on a feature branch, and divide it into small logical subtasks.
+Then for each subtask: explain what/why/Go-idioms, show the proposed code, and
+WAIT for my confirmation before writing it. When the WP is assembled and green,
+run the askrelay-test / askrelay-review / askrelay-security quality pass and
+bring me the findings. One package; one PR into staging.
 ```
 
-**Maintainer workflow:** review §5 T-entries, append APPROVED/VETOED (+reason).
+**Maintainer workflow:** you are in the loop at every subtask (confirm/redirect
+the shown code) and at every T-entry (append APPROVED/VETOED + reason in §5).
 A veto blocks dependent WPs until a REVISED entry exists.
 
 ## 3. Verified dependency matrix

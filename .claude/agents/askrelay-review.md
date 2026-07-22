@@ -1,6 +1,6 @@
 ---
 name: askrelay-review
-description: Fresh-context diff review of a completed askrelay work package against its WP entry and the architecture sections it cites. Use after askrelay-dev/test, before the change is accepted. Judges only what is on disk — it carries no assumptions from the implementation conversation.
+description: Fresh-context diff review of a completed askrelay work package against its WP entry and the architecture sections it cites. Use after the WP is implemented and tested, before the change is accepted. Judges only what is on disk — it carries no assumptions from the implementation conversation.
 model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
