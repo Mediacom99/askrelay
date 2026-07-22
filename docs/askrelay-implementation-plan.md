@@ -13,7 +13,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 
 | WP | Package | Status | Depends on | Gated by |
 |---|---|---|---|---|
-| WP-01 | `internal/envelope` — signed envelope | IN_PROGRESS | — | T-01 T-02 S-05 ✓ |
+| WP-01 | `internal/envelope` — signed envelope | DONE | — | T-01 T-02 T-16 S-05 ✓ |
 | WP-02 | `internal/gate` — approval/grant state machine | TODO | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | TODO | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
@@ -44,8 +44,9 @@ Spikes (timeboxed, produce a Learnings entry + possibly decision revisions):
 
 Product D-01..D-18: all APPROVED (see phase2-decision-log.md). Technical
 T-01..T-15: all **APPROVED** (maintainer, 2026-07-16 — walked through and
-approved one by one). Future T-entries start as PROPOSED; WPs gated on a
-T-entry may not start until it is APPROVED.
+approved one by one). T-16 (whole-artifact size caps) APPROVED 2026-07-22 from
+the WP-01 test pass. Future T-entries start as PROPOSED; WPs gated on a T-entry
+may not start until it is APPROVED.
 
 ## 2. Execution protocol (agent pipeline)
 
@@ -118,7 +119,7 @@ empty until each WP's first import.
 | `modernc.org/sqlite` | **v1.54.0** (2026-07-15) | WP-03 | Pure-Go (transpiled amalgamation), BSD-3, wraps SQLite 3.53.3; 10 releases in 4 months. Keeps `CGO_ENABLED=0` true; mattn/go-sqlite3 still needs cgo (re-verified). |
 | `github.com/coder/websocket` | **v1.8.15** (2026-06-15) | WP-08 (relay), WP-09 (daemon) | ISC, zero deps, canonical successor to nhooyr.io/websocket (old repo 301s here). Import path must be `github.com/coder/websocket`. |
 | `github.com/golang-jwt/jwt/v5` | **v5.3.1** (2026-01-28) | WP-05 | MIT. EdDSA-signed, audience-bound access tokens (T-06); pairs with go-sdk's BYO `TokenVerifier`. |
-| `github.com/google/uuid` | latest at import (verify then) | WP-01 | UUIDv7 for envelope/thread IDs (T-02). Verify tag + license at WP-01 and record here. |
+| `github.com/google/uuid` | **v1.6.0** (latest tag) | WP-01 | BSD-3-Clause; `uuid.NewV7()` present. UUIDv7 for envelope/thread IDs (T-02). Verified + pinned at WP-01 (2026-07-22); the only non-stdlib dependency in `internal/envelope`. |
 | `golang.org/x/crypto` | not needed in v1 | — | stdlib `crypto/ed25519` covers signing (arch §3). If ever imported: v0.54.0 (2026-07-08, BSD-3) was current; avoid deprecated `openpgp` (GO-2026-5932). |
 | ~~`github.com/spf13/cobra`~~ | not adopted | — | v1.10.2 healthy (Apache-2.0); not adopted per T-05 (APPROVED — stdlib `flag` + subcommand dispatch); revisit only if verb count sprawls. |
 
@@ -206,16 +207,32 @@ reference and bind every WP.
   No router dep. *APPROVED (maintainer, 2026-07-16)*
 - **T-15 — Logging: stdlib `log/slog`, JSON handler on the relay, text on the
   daemon; no third-party logger.** *APPROVED (maintainer, 2026-07-16)*
+- **T-16 — Envelope size cap is enforced on the whole artifact, in the
+  `internal/envelope` type itself.** Three caps, all checked in the same path as
+  Sign/Verify so neither can produce nor accept an over-limit envelope:
+  `MaxBodyBytes = 32 << 10` (sum of `Part.Text` UTF-8 bytes, existing),
+  `MaxWireBytes = 64 << 10` (whole canonical envelope), and `MaxParts = 16`
+  (part count). Body-text and whole-wire overruns return `ErrTooLarge`;
+  part-count overruns return a new `ErrTooManyParts`. Rationale: boundedness is
+  a property of the artifact, so every downstream consumer (store, delivery, MCP)
+  inherits it and none can forget it — the WP-01 test pass demonstrated a signed,
+  verifying 4.2 MB envelope (128× the intended cap) built from metadata/part-count
+  bloat, which contradicted arch §3/§8's exfil-mitigation claim. Relay ingress
+  (WP-03/WP-07) still adds a raw-read cap as defense-in-depth.
+  *APPROVED (maintainer, 2026-07-22 — WP-01 test pass finding).*
 
 ## 6. Work packages
 
 ### WP-01 — `internal/envelope`
 
-**Status:** TODO · **Depends on:** — · **Gated by:** T-01 T-02 (both APPROVED),
-S-05 (§8 kill criterion 1 — **cleared 2026-07-20, PROCEED**) · **Spec:** arch §3, §12.
+**Status:** DONE (2026-07-22) · **Depends on:** — · **Gated by:** T-01 T-02 T-16
+(all APPROVED), S-05 (§8 kill criterion 1 — **cleared 2026-07-20, PROCEED**) ·
+**Spec:** arch §3, §12.
 
 **Goal:** the envelope as the single shared artifact: types, JCS
-canonicalization, Ed25519 sign/verify, size caps, append-only versioning.
+canonicalization, Ed25519 sign/verify, whole-artifact size caps (T-16:
+`MaxBodyBytes`/`MaxWireBytes`/`MaxParts`, enforced in the Sign/Verify path),
+append-only versioning.
 
 **Files:** `internal/envelope/{envelope.go,canon.go,sign.go}` + tests +
 `fuzz_test.go`.
@@ -231,13 +248,18 @@ type Envelope struct { V int; ID, Thread string; From Party; To string;
 type Party struct { Person, Device, Agent string }
 type Message struct { Role string; Parts []Part }        // arch §3
 type Part struct { Type string; Text string }            // "text" only in v1
-const MaxBodyBytes = 32 << 10
+const MaxBodyBytes = 32 << 10   // sum of Part.Text UTF-8 bytes
+const MaxWireBytes = 64 << 10   // whole canonical envelope (T-16)
+const MaxParts     = 16         // Body.Parts count (T-16)
 func New(...) Envelope                                   // UUIDv7 ids
 func Canonical(e Envelope) ([]byte, error)               // RFC 8785, sig omitted
-func Sign(e *Envelope, priv ed25519.PrivateKey) error
-func Verify(e Envelope, pub ed25519.PublicKey) error     // sig + caps + version
-var ErrTooLarge, ErrBadVersion, ErrBadSignature error
+func Sign(e *Envelope, priv ed25519.PrivateKey) error    // enforces all caps + version
+func Verify(e Envelope, pub ed25519.PublicKey) error     // sig + all caps + version
+var ErrTooLarge, ErrTooManyParts, ErrBadVersion, ErrBadSignature error
 ```
+Caps are enforced in the shared check path so Sign cannot produce, and Verify
+cannot accept, an over-limit envelope (T-16). `ErrTooLarge` covers body-text and
+whole-wire overruns; `ErrTooManyParts` covers the part-count cap.
 
 **Test plan:** round-trip; canonical stability across field order & unicode;
 signature tamper matrix (every field); size-cap edges; fuzz Decode/Canonical;
@@ -267,6 +289,13 @@ discarded`; per-thread × direction grants with `via_grant` audit marks.
 short-circuit exactly one gate direction; no way to construct a "sent" without
 approval-or-grant in the type surface.
 
+**Security note (WP-01 review F3):** the envelope's `state` field is an
+**untrusted sender assertion** — the envelope does not validate it. WP-02 must
+never let an inbound envelope's `state` drive a gate transition or
+short-circuit approval (a forged `state="completed"` must not close a thread);
+derive state from the gate's own authoritative record, validate against the
+seven A2A states, and treat unknown/attacker-chosen values as invalid.
+
 ### WP-03 — `internal/relay/store`
 
 **Status:** TODO · **Depends on:** WP-01 · **Gated by:** T-03 T-09 ·
@@ -282,6 +311,20 @@ queries (ack+grace, hard TTL).
 **Test plan:** migration idempotency; revoked-device refusal; invite
 single-use race; sweeper boundary cases (partial acks, grace edges, hard TTL
 overrides un-fetched); grants survive message deletion.
+
+**Security notes (WP-01 review F1/F2 + canonical-form invariant):**
+- Store the **canonical form / re-marshaled decoded struct** in the `messages`
+  blob, **never the raw received wire** (arch §4.1 invariant).
+- Replay/dedup tombstone keys on the signed `id` string — never a wire hash
+  (the wire is malleable: whitespace/key-order changes verify to the same `id`).
+  Treat empty, non-UUID, or duplicate `id` as replay; do not rely on UUIDv7
+  monotonicity for anything security-relevant.
+- `sent_at` is a self-asserted sender clock: bound it **both** past (retention
+  window) **and** future (clock-skew cap), else a post-dated envelope re-enters
+  the freshness window indefinitely.
+- Wrap ingress reads in `io.LimitReader` set **above** `MaxWireBytes` (canonical
+  cap + ~97 bytes sig framing + slack for non-canonical whitespace/escaping) —
+  `envelope.Decode` assumes pre-bounded input and imposes no size limit itself.
 
 ### WP-04 — relay HTTP skeleton + enrollment
 
@@ -340,6 +383,12 @@ preamble, URL de-linking) for every content-bearing response.
 golden files; a "malicious message" suite (fake closing tags, tool-invoking
 prose, URLs) verifying rendered output keeps the quarantine intact; profile
 cap enforcement; every call completes < 45 s with a ChatGPT-profile token.
+
+**Security note (WP-01 review F3):** `part.type` is an unvalidated sender
+string. The no-auto-fetch / inbound-quarantine invariant (arch §8) lives here,
+not in the envelope: whitelist known part types and render any unknown type
+(e.g. a sender-supplied `"image"`) as inert text — never as a fetchable/renderable
+resource. Also apply the ingress `io.LimitReader` (see WP-03) on this surface.
 
 ### WP-08 — WS hub, delivery, retention sweeper
 
@@ -457,6 +506,14 @@ Gate 0 fully checked (the §2 checklist-condition rule; D-08) ·
 contact + takedown path, terms page, backup/rotation runbook. Exit = the
 public "try it in 60 seconds" relay of D-08/D-16.
 
+**Security note (WP-01 review F4):** the signed envelope has no relay/audience
+binding — safe under D-06 (single-team, per-device keys), but a signed envelope
+is replayable onto any relay sharing a device key. Before this multi-tenant
+hosted instance ships, add an audience/relay-identifier to the signed envelope
+(the RFC 8707 analog) so cross-relay replay is structurally impossible, not
+merely precluded by the single-relay assumption. This is an envelope `v`-bump
+(arch §12), so plan it deliberately.
+
 **Paid-tier-ready, not paid (D-08 revision 2026-07-19):** enforce hard quotas
 from day one — small per-org daily message caps, short message TTLs, rate
 limits (the ntfy expectation-lock is the cautionary tale for a relay-shaped
@@ -472,6 +529,26 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
 
 *(append-only; every entry names the WPs it changed)*
 
+- 2026-07-22 — **WP-01 DONE** (first pipeline run: dev → adversarial test →
+  T-16 hardening → review → security, each pass verified green by the
+  orchestrator). Deps: `github.com/google/uuid v1.6.0` (BSD-3) pinned — matrix
+  updated. The test pass found the text-only size cap let a signed 4.2 MB
+  envelope verify → raised as **T-16** (whole-artifact caps `MaxWireBytes`
+  64 KiB + `MaxParts` 16, enforced in the shared Sign/Verify check path);
+  approved and implemented. Security red-team found no consent-bypass and no
+  integrity break (canonicalization unambiguous for the envelope; Decode-then-
+  Verify collapses all wire malleability; exfil-by-bulk closed). It surfaced
+  four **cross-WP** rules, now written into the affected entries: **arch §4.1**
+  — store the canonical form, never raw wire (a signature authenticates the
+  decoded struct's canonical projection, not the wire; every consumer must
+  Decode→Verify→read-from-struct). **WP-02** — envelope `state` is an untrusted
+  sender assertion; never let it drive a gate. **WP-03** — replay-tombstone on
+  the signed `id` (never a wire hash); bound `sent_at` past AND future; ingress
+  `io.LimitReader` set *above* `MaxWireBytes`+sig-overhead+slack (Decode assumes
+  pre-bounded input). **WP-07** — client-side `part.type` whitelist, render
+  unknown types inert (the no-auto-fetch invariant lives here). **WP-16** —
+  add relay/audience binding to the signed envelope before the multi-tenant
+  hosted instance (an envelope `v`-bump).
 - 2026-07-16 — Plan drafted. Pin sweep found CI's golangci-lint-action two
   majors stale (@v6 → @v9): fixed in the Phase 4 re-scaffold commit, affects
   no WP. The 2026-07-28 MCP RC deprecates Roots/Sampling/Logging and removes
