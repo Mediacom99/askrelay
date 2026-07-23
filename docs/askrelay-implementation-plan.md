@@ -14,7 +14,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP | Package | Status | Depends on | Gated by |
 |---|---|---|---|---|
 | WP-01 | `internal/envelope` — signed envelope | DONE | — | T-01 T-02 T-16 S-05 ✓ |
-| WP-02 | `internal/gate` — approval/grant state machine | TODO | — | — |
+| WP-02 | `internal/gate` — approval/grant state machine | IN_PROGRESS | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | TODO | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | TODO | WP-04 | T-06 |
@@ -45,8 +45,9 @@ Spikes (timeboxed, produce a Learnings entry + possibly decision revisions):
 Product D-01..D-18: all APPROVED (see phase2-decision-log.md). Technical
 T-01..T-15: all **APPROVED** (maintainer, 2026-07-16 — walked through and
 approved one by one). T-16 (whole-artifact size caps) APPROVED 2026-07-22 from
-the WP-01 test pass. Future T-entries start as PROPOSED; WPs gated on a T-entry
-may not start until it is APPROVED.
+the WP-01 test pass. T-17 (error-handling convention) + T-18 (logging policy)
+APPROVED 2026-07-23 — cross-cutting, bind every WP from WP-03 on. Future
+T-entries start as PROPOSED; WPs gated on a T-entry may not start until APPROVED.
 
 ## 2. Execution protocol (maintainer-supervised)
 
@@ -229,6 +230,32 @@ reference and bind every WP.
   bloat, which contradicted arch §3/§8's exfil-mitigation claim. Relay ingress
   (WP-03/WP-07) still adds a raw-read cap as defense-in-depth.
   *APPROVED (maintainer, 2026-07-22 — WP-01 test pass finding).*
+- **T-17 — Error-handling convention (ratifies the WP-01/WP-02 style, made
+  binding).** Sentinel error *values* (`errors.New`, exported `ErrXxx`) for
+  outcomes callers branch on, matched with `errors.Is`; typed errors only when a
+  caller needs structured data out of the error. Propagate by wrapping:
+  `fmt.Errorf("<pkg>: <context>: %w", err)` — `%w` preserves the chain, the
+  `<pkg>:` prefix makes origin legible. Return zero value + error, never both.
+  Panic only for unrecoverable faults (e.g. CSPRNG failure, cf. `uuid.Must`),
+  never for expected runtime conditions. The pure core packages (`a2a`,
+  `envelope`, `gate`) never log — they return errors; only the boundary layers
+  (relay handlers, daemon, CLI, sweeper) log. Errors crossing to a remote MCP
+  client are sanitized (no internal detail or content leaks); the client-facing
+  error taxonomy is decided at WP-07, not now (boundary-errors fork —
+  sentinels-sanitized-at-boundary chosen, structured codes deferred).
+  *APPROVED (maintainer, 2026-07-23).*
+- **T-18 — Logging policy (mechanism per T-15: `slog`, JSON on relay / text on
+  daemon).** NEVER log message bodies/content, secrets, tokens, invite links,
+  private keys, or PII — log identifiers and shapes only (thread id, message id,
+  state, byte counts, error kind). Structured fields, not formatted strings
+  (`slog.String("thread", id)`), so a secret cannot be accidentally interpolated
+  into a message. Levels: `Error` (real failure), `Warn` (recoverable/suspicious
+  — signature reject, over-cap envelope, gate refusal, revoked-device attempt),
+  `Info` (lifecycle: startup, enrollment, delivery), `Debug` (dev builds only,
+  `-tags dev` per T-13). Security-relevant refusals are logged at `Warn` WITHOUT
+  the offending content; the durable consent audit trail (grant/approval rows)
+  lives in the store (WP-03), not in logs. Logging happens only at boundaries
+  (T-17). *APPROVED (maintainer, 2026-07-23).*
 
 ## 6. Work packages
 
@@ -335,6 +362,21 @@ overrides un-fetched); grants survive message deletion.
   cap + ~97 bytes sig framing + slack for non-canonical whitespace/escaping) —
   `envelope.Decode` assumes pre-bounded input and imposes no size limit itself.
 
+**Security notes (WP-02 quality pass):**
+- The state passed to `gate.ApplyInbound` MUST be the store's authoritative
+  thread row, **never** `envelope.State` — F3 as an integration contract: the
+  call `gate.ApplyInbound(env.State, v)` typechecks and silently reintroduces
+  the forged-state bypass. Consider a store-minted state type so the wrong
+  call does not compile.
+- Approval must be transactional: read current state → `gate.Apply*` → commit
+  as **one unit**, or two concurrent approvals of the same draft each read
+  `pending_review` and double-mint a `Release` (TOCTOU double-send).
+- A payload handed to the gate is **immutable afterwards**: the minted
+  `Release` aliases the caller's value (an Envelope's slices are shared, not
+  copied — the gate cannot deep-copy an opaque `any`). `approve_reply`'s
+  edit-before-release flow must construct a fresh envelope, never mutate the
+  one already passed to the gate.
+
 ### WP-04 — relay HTTP skeleton + enrollment
 
 **Status:** TODO · **Depends on:** WP-03 · **Gated by:** T-11 T-14 T-15 ·
@@ -399,6 +441,12 @@ not in the envelope: whitelist known part types and render any unknown type
 (e.g. a sender-supplied `"image"`) as inert text — never as a fetchable/renderable
 resource. Also apply the ingress `io.LimitReader` (see WP-03) on this surface.
 
+**Security note (WP-02 quality pass):** exactly ONE handler
+(`approve_message`) may call `gate.ApplyInbound` with a human verdict.
+Inbound deliberately has no `Release`-style capability token — the async
+design doesn't need one — so this is a wiring discipline the WP-07 review
+must explicitly check, not a type-level guarantee.
+
 ### WP-08 — WS hub, delivery, retention sweeper
 
 **Status:** TODO · **Depends on:** WP-03 WP-04 · **Gated by:** T-04 T-09 ·
@@ -409,6 +457,17 @@ accept outbound envelopes, track per-device acks; resend-on-reconnect;
 retention sweeper goroutine wired to T-09 knobs.
 
 **Dependency added:** `github.com/coder/websocket v1.8.15`.
+
+**Security notes (WP-02 quality pass):** delivery MUST match
+`gate.Release.Thread()` **and** `gate.Release.ID()` against the message it
+transmits — thread alone permits replaying an approved Release for a
+*different* message in the same thread, and a non-nil `*Release` alone is
+forgeable as an inert `new(gate.Release)` (empty thread/id, nil payload;
+pinned by `internal/gate/surface_test.go`). Do **not** rely on payload
+identity: `Payload()` is an uncomparable `any` (naive `==` panics on an
+Envelope) and the minted value aliases the caller's slices — the
+approved-content-is-what-sends guarantee rests on WP-03's
+payload-immutability note.
 
 **Test plan:** kill/reconnect matrix (nothing lost, nothing duplicated beyond
 at-least-once + id dedupe); ack bookkeeping vs sweeper; revocation severs live

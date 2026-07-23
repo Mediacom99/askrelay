@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/Mediacom99/askrelay/internal/a2a"
 )
 
 // Version is the current envelope wire version. Evolution is append-only
@@ -51,22 +53,6 @@ var (
 	ErrBadSignature = errors.New("envelope: bad signature")
 )
 
-// ThreadState is an A2A Task state carried verbatim on the wire and in audit
-// rows (docs/askrelay-architecture.md §3). WP-01 records the state a message
-// effects; the approval/grant state machine (WP-02) owns transitions.
-type ThreadState string
-
-// A2A-verbatim thread states (hyphenated on the wire).
-const (
-	StateSubmitted     ThreadState = "submitted"
-	StateWorking       ThreadState = "working"
-	StateInputRequired ThreadState = "input-required"
-	StateCompleted     ThreadState = "completed"
-	StateFailed        ThreadState = "failed"
-	StateCanceled      ThreadState = "canceled"
-	StateRejected      ThreadState = "rejected"
-)
-
 // Party identifies the sending endpoint: the person, the enrolled device whose
 // key signs the envelope, and the originating agent/client.
 type Party struct {
@@ -96,16 +82,16 @@ type Message struct {
 // (id tombstones + sent_at freshness) is the store's job (WP-03); the envelope
 // carries ID, Thread, and SentAt so that becomes possible.
 type Envelope struct {
-	V           int         `json:"v"`
-	ID          string      `json:"id"`
-	Thread      string      `json:"thread"`
-	From        Party       `json:"from"`
-	To          string      `json:"to"`
-	State       ThreadState `json:"state"`
-	SentAt      time.Time   `json:"sent_at"`
-	AIGenerated bool        `json:"ai_generated"`
-	Body        Message     `json:"body"`
-	Sig         []byte      `json:"sig,omitempty"`
+	V           int             `json:"v"`
+	ID          string          `json:"id"`
+	Thread      string          `json:"thread"`
+	From        Party           `json:"from"`
+	To          string          `json:"to"`
+	State       a2a.ThreadState `json:"state"`
+	SentAt      time.Time       `json:"sent_at"`
+	AIGenerated bool            `json:"ai_generated"`
+	Body        Message         `json:"body"`
+	Sig         []byte          `json:"sig,omitempty"`
 }
 
 // New builds an unsigned envelope at the current Version with a fresh UUIDv7
@@ -116,7 +102,7 @@ type Envelope struct {
 //
 // New panics only if the operating system CSPRNG is unavailable, which is
 // unrecoverable (mirrors stdlib randomness helpers).
-func New(from Party, to, thread string, state ThreadState, aiGenerated bool, body Message) Envelope {
+func New(from Party, to, thread string, state a2a.ThreadState, aiGenerated bool, body Message) Envelope {
 	if thread == "" {
 		thread = newID()
 	}

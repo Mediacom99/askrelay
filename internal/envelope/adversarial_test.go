@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/Mediacom99/askrelay/internal/a2a"
 )
 
 // U+2028 LINE SEPARATOR / U+2029 PARAGRAPH SEPARATOR, built from rune values so
@@ -616,7 +618,7 @@ func TestConcurrentSignVerify(t *testing.T) {
 			defer wg.Done()
 			for i := 0; i < iters; i++ {
 				body := Message{Role: "agent", Parts: []Part{{Type: "text", Text: "concurrent"}}}
-				e := New(Party{Person: "edo", Device: "d", Agent: "cc"}, "marco", "", StateSubmitted, true, body)
+				e := New(Party{Person: "edo", Device: "d", Agent: "cc"}, "marco", "", a2a.StateSubmitted, true, body)
 				if err := Sign(&e, priv); err != nil {
 					errCh <- err
 					return

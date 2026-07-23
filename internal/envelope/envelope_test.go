@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Mediacom99/askrelay/internal/a2a"
 )
 
 // sampleEnvelope returns a deterministic, in-spec envelope for tests. It does
@@ -23,7 +25,7 @@ func sampleEnvelope() Envelope {
 			Agent:  "claude-code",
 		},
 		To:          "marco",
-		State:       StateSubmitted,
+		State:       a2a.StateSubmitted,
 		SentAt:      time.Date(2026, 7, 16, 9, 30, 0, 0, time.UTC),
 		AIGenerated: true,
 		Body: Message{
@@ -48,7 +50,7 @@ func keypair(t *testing.T) (ed25519.PublicKey, ed25519.PrivateKey) {
 func TestNewDefaults(t *testing.T) {
 	body := Message{Role: "user", Parts: []Part{{Type: "text", Text: "hi"}}}
 	before := time.Now().UTC()
-	e := New(Party{Person: "edo", Device: "d", Agent: "claude-code"}, "marco", "", StateSubmitted, false, body)
+	e := New(Party{Person: "edo", Device: "d", Agent: "claude-code"}, "marco", "", a2a.StateSubmitted, false, body)
 	after := time.Now().UTC()
 
 	if e.V != Version {
@@ -69,7 +71,7 @@ func TestNewDefaults(t *testing.T) {
 	if len(e.Sig) != 0 {
 		t.Errorf("New should not sign; Sig len = %d", len(e.Sig))
 	}
-	if e.To != "marco" || e.State != StateSubmitted || e.AIGenerated {
+	if e.To != "marco" || e.State != a2a.StateSubmitted || e.AIGenerated {
 		t.Errorf("New copied fields wrong: %+v", e)
 	}
 }
@@ -79,7 +81,7 @@ func TestNewUUIDv7Sortable(t *testing.T) {
 	body := Message{Role: "user", Parts: []Part{{Type: "text", Text: "x"}}}
 	prev := ""
 	for range 50 {
-		e := New(Party{}, "to", "", StateSubmitted, false, body)
+		e := New(Party{}, "to", "", a2a.StateSubmitted, false, body)
 		if prev != "" && e.ID < prev {
 			t.Fatalf("UUIDv7 ids not monotonic: %q came after %q", e.ID, prev)
 		}
@@ -89,7 +91,7 @@ func TestNewUUIDv7Sortable(t *testing.T) {
 
 func TestNewReuseThread(t *testing.T) {
 	body := Message{Role: "user", Parts: []Part{{Type: "text", Text: "reply"}}}
-	e := New(Party{}, "marco", "thread-123", StateWorking, true, body)
+	e := New(Party{}, "marco", "thread-123", a2a.StateWorking, true, body)
 	if e.Thread != "thread-123" {
 		t.Errorf("thread not reused: %q", e.Thread)
 	}
@@ -197,25 +199,12 @@ func TestVersionConstant(t *testing.T) {
 	}
 }
 
-// TestStateNamesVerbatim guards the A2A-verbatim hyphenated wire spellings.
-func TestStateNamesVerbatim(t *testing.T) {
-	pairs := map[ThreadState]string{
-		StateSubmitted:     "submitted",
-		StateWorking:       "working",
-		StateInputRequired: "input-required",
-		StateCompleted:     "completed",
-		StateFailed:        "failed",
-		StateCanceled:      "canceled",
-		StateRejected:      "rejected",
-	}
-	for got, want := range pairs {
-		if string(got) != want {
-			t.Errorf("state constant = %q, want %q", got, want)
-		}
-	}
-	// The state marshals to its verbatim string on the wire.
+// TestStateSerializedVerbatim guards that the envelope serializes the thread
+// state field to its verbatim A2A wire spelling. (The constant values
+// themselves are guarded in the a2a package, which owns them.)
+func TestStateSerializedVerbatim(t *testing.T) {
 	e := sampleEnvelope()
-	e.State = StateInputRequired
+	e.State = a2a.StateInputRequired
 	raw, err := json.Marshal(e)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)

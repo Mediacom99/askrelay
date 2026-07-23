@@ -357,6 +357,7 @@ promise away (D-01, D-02).
 
 ```
 cmd/askrelay/            main: subcommand dispatch (§7)
+internal/a2a/            §3 — A2A thread-state vocabulary (dependency-free leaf)
 internal/envelope/       §3 — types, JCS canonicalization, sign/verify (stdlib crypto/ed25519)
 internal/relay/          §4 — http server, ws hub, sweeper, invites
 internal/relay/store/    §4.1 — sqlite schema + queries
