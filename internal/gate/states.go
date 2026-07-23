@@ -28,6 +28,7 @@ type Approvable struct {
 	Kind      Kind
 	Direction Direction
 	Thread    string // thread id this approvable belongs to
+	ID        string // message id (envelope.ID in v1); minted into the Release so delivery can match it
 	Payload   any    // opaque to the gate; an envelope.Envelope in v1
 }
 

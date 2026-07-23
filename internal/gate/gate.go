@@ -21,6 +21,11 @@ var (
 	// verdict is required — returned by the grant-driven paths when they
 	// cannot auto-approve.
 	ErrNoGrant = errors.New("gate: no active grant")
+	// ErrWrongDirection means the approvable's Direction does not match the
+	// path it was routed to — a caller bug the gate refuses rather than
+	// trusts: an inbound message must never mint a Release, and an outbound
+	// draft must never flip a thread state.
+	ErrWrongDirection = errors.New("gate: wrong direction")
 )
 
 // Verdict is a person's decision on an approvable awaiting them. The same two
@@ -83,12 +88,18 @@ func validState(s a2a.ThreadState) bool {
 // the guarantee is on the act of sending, not the "sent" label.
 type Release struct {
 	thread   string
+	id       string
 	payload  any
 	viaGrant bool
 }
 
 // Thread reports the thread this release belongs to.
 func (r *Release) Thread() string { return r.thread }
+
+// ID reports the approved message's id. Delivery (WP-08) must match this AND
+// Thread() against the message it transmits — thread alone would let an
+// approved Release for one message send a different one in the same thread.
+func (r *Release) ID() string { return r.id }
 
 // Payload reports the approved payload (the envelope in v1).
 func (r *Release) Payload() any { return r.payload }
@@ -105,7 +116,14 @@ func (r *Release) ViaGrant() bool { return r.viaGrant }
 //
 // cur MUST be the store's authoritative draft state, never a value derived from
 // untrusted input — the same discipline ApplyInbound applies to thread state.
+//
+// a.Direction must be Outbound: the gate refuses a mistagged approvable with
+// ErrWrongDirection rather than trusting caller-supplied fields to agree — an
+// inbound message must never mint a Release.
 func ApplyOutbound(a Approvable, cur DraftState, v Verdict) (DraftState, *Release, error) {
+	if a.Direction != Outbound {
+		return "", nil, ErrWrongDirection
+	}
 	if !validDraftState(cur) {
 		return "", nil, ErrUnknownState
 	}
@@ -114,7 +132,7 @@ func ApplyOutbound(a Approvable, cur DraftState, v Verdict) (DraftState, *Releas
 	}
 	switch v {
 	case Approve:
-		return Sent, &Release{thread: a.Thread, payload: a.Payload}, nil
+		return Sent, &Release{thread: a.Thread, id: a.ID, payload: a.Payload}, nil
 	case Reject:
 		return Discarded, nil, nil
 	default:
@@ -137,6 +155,10 @@ func validDraftState(s DraftState) bool {
 // ONE direction (D-03 inbound, D-11 outbound). The store persists grants as
 // immortal audit rows (WP-03) and owns revocation; the gate treats a Grant
 // as data and never looks one up.
+//
+// Grant deliberately has no Kind field while KindMessage is the only kind —
+// whichever WP introduces a second Kind must add Kind here and to Covers, or
+// every thread grant silently widens to the new kind.
 type Grant struct {
 	Thread    string
 	Direction Direction
@@ -145,17 +167,27 @@ type Grant struct {
 
 // Covers reports whether g currently auto-approves a: same thread, same
 // direction, not revoked. A grant covers exactly one direction, so an inbound
-// grant never short-circuits an outbound reply and vice versa. A zero-value
-// or thread-less grant covers nothing.
+// grant never short-circuits an outbound reply and vice versa. Only the two
+// canonical directions can be granted; a zero-value or thread-less grant
+// covers nothing.
 func (g Grant) Covers(a Approvable) bool {
-	return !g.Revoked && g.Thread != "" && g.Thread == a.Thread && g.Direction == a.Direction
+	return !g.Revoked && g.Thread != "" &&
+		(g.Direction == Inbound || g.Direction == Outbound) &&
+		g.Thread == a.Thread && g.Direction == a.Direction
 }
 
 // ApplyInboundGrant auto-approves an inbound message when g covers it — the
 // grant-driven equivalent of a human ApplyInbound(cur, Approve). If g does
 // not cover a, it returns ErrNoGrant and the caller must get a human verdict.
 // The store records the resulting transition as via-grant.
+//
+// a.Direction must be Inbound — a mistagged approvable is refused with
+// ErrWrongDirection even when a grant would cover it, so an "outbound" pair
+// can never flip a thread state through this path.
 func ApplyInboundGrant(g Grant, a Approvable, cur a2a.ThreadState) (a2a.ThreadState, error) {
+	if a.Direction != Inbound {
+		return "", ErrWrongDirection
+	}
 	if !g.Covers(a) {
 		return "", ErrNoGrant
 	}
@@ -163,7 +195,9 @@ func ApplyInboundGrant(g Grant, a Approvable, cur a2a.ThreadState) (a2a.ThreadSt
 }
 
 // ApplyOutboundGrant auto-releases a drafted reply when g covers it, minting a
-// Release marked ViaGrant. If g does not cover a, it returns ErrNoGrant.
+// Release marked ViaGrant. If g does not cover a, it returns ErrNoGrant. It
+// needs no direction assert of its own: it composes ApplyOutbound, which
+// refuses a mistagged approvable with ErrWrongDirection.
 func ApplyOutboundGrant(g Grant, a Approvable, cur DraftState) (DraftState, *Release, error) {
 	if !g.Covers(a) {
 		return "", nil, ErrNoGrant

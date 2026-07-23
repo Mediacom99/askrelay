@@ -39,7 +39,7 @@ func TestApplyInbound(t *testing.T) {
 }
 
 func TestApplyOutbound(t *testing.T) {
-	sample := Approvable{Kind: KindMessage, Direction: Outbound, Thread: "01ABC", Payload: "reply-body"}
+	sample := Approvable{Kind: KindMessage, Direction: Outbound, Thread: "01ABC", ID: "01MSG", Payload: "reply-body"}
 	cases := []struct {
 		name    string
 		current DraftState
@@ -69,14 +69,38 @@ func TestApplyOutbound(t *testing.T) {
 				t.Fatalf("release present = %v, want %v", rel != nil, c.wantRel)
 			}
 			if rel != nil {
-				if rel.Thread() != sample.Thread || rel.Payload() != sample.Payload {
-					t.Errorf("release carries wrong data: thread=%q payload=%v", rel.Thread(), rel.Payload())
+				if rel.Thread() != sample.Thread || rel.ID() != sample.ID || rel.Payload() != sample.Payload {
+					t.Errorf("release carries wrong data: thread=%q id=%q payload=%v", rel.Thread(), rel.ID(), rel.Payload())
 				}
 				if rel.ViaGrant() {
 					t.Error("manual approval must not be marked via_grant")
 				}
 			}
 		})
+	}
+}
+
+// The three mistagged-direction attacks from the WP-02 quality pass: an
+// approvable whose Direction field disagrees with the path it is routed to
+// must be refused, even when a grant covers it or the pair is internally
+// consistent.
+func TestWrongDirectionRefused(t *testing.T) {
+	if _, _, err := ApplyOutbound(Approvable{Kind: KindMessage, Direction: Inbound, Thread: "01ABC", ID: "01MSG", Payload: "x"}, PendingReview, Approve); !errors.Is(err, ErrWrongDirection) {
+		t.Errorf("inbound-tagged approvable through ApplyOutbound: err = %v, want ErrWrongDirection", err)
+	}
+	// Security PoC: outbound-only grant + outbound-tagged approvable routed
+	// through the INBOUND grant path must not flip the thread state.
+	g := Grant{Thread: "01ABC", Direction: Outbound}
+	a := Approvable{Kind: KindMessage, Direction: Outbound, Thread: "01ABC", ID: "01MSG", Payload: "x"}
+	if _, err := ApplyInboundGrant(g, a, a2a.StateInputRequired); !errors.Is(err, ErrWrongDirection) {
+		t.Errorf("outbound pair through ApplyInboundGrant: err = %v, want ErrWrongDirection", err)
+	}
+	// Test-pass PoC: self-consistent INBOUND pair routed through the outbound
+	// grant path must not mint a Release.
+	gi := Grant{Thread: "01ABC", Direction: Inbound}
+	ai := Approvable{Kind: KindMessage, Direction: Inbound, Thread: "01ABC", ID: "01MSG", Payload: "x"}
+	if _, rel, err := ApplyOutboundGrant(gi, ai, PendingReview); !errors.Is(err, ErrWrongDirection) || rel != nil {
+		t.Errorf("inbound pair through ApplyOutboundGrant: err = %v, rel = %v; want ErrWrongDirection, nil", err, rel)
 	}
 }
 

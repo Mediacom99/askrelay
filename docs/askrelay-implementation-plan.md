@@ -362,6 +362,21 @@ overrides un-fetched); grants survive message deletion.
   cap + ~97 bytes sig framing + slack for non-canonical whitespace/escaping) —
   `envelope.Decode` assumes pre-bounded input and imposes no size limit itself.
 
+**Security notes (WP-02 quality pass):**
+- The state passed to `gate.ApplyInbound` MUST be the store's authoritative
+  thread row, **never** `envelope.State` — F3 as an integration contract: the
+  call `gate.ApplyInbound(env.State, v)` typechecks and silently reintroduces
+  the forged-state bypass. Consider a store-minted state type so the wrong
+  call does not compile.
+- Approval must be transactional: read current state → `gate.Apply*` → commit
+  as **one unit**, or two concurrent approvals of the same draft each read
+  `pending_review` and double-mint a `Release` (TOCTOU double-send).
+- A payload handed to the gate is **immutable afterwards**: the minted
+  `Release` aliases the caller's value (an Envelope's slices are shared, not
+  copied — the gate cannot deep-copy an opaque `any`). `approve_reply`'s
+  edit-before-release flow must construct a fresh envelope, never mutate the
+  one already passed to the gate.
+
 ### WP-04 — relay HTTP skeleton + enrollment
 
 **Status:** TODO · **Depends on:** WP-03 · **Gated by:** T-11 T-14 T-15 ·
@@ -426,6 +441,12 @@ not in the envelope: whitelist known part types and render any unknown type
 (e.g. a sender-supplied `"image"`) as inert text — never as a fetchable/renderable
 resource. Also apply the ingress `io.LimitReader` (see WP-03) on this surface.
 
+**Security note (WP-02 quality pass):** exactly ONE handler
+(`approve_message`) may call `gate.ApplyInbound` with a human verdict.
+Inbound deliberately has no `Release`-style capability token — the async
+design doesn't need one — so this is a wiring discipline the WP-07 review
+must explicitly check, not a type-level guarantee.
+
 ### WP-08 — WS hub, delivery, retention sweeper
 
 **Status:** TODO · **Depends on:** WP-03 WP-04 · **Gated by:** T-04 T-09 ·
@@ -437,10 +458,16 @@ retention sweeper goroutine wired to T-09 knobs.
 
 **Dependency added:** `github.com/coder/websocket v1.8.15`.
 
-**Security note (WP-02 surface sweep):** delivery MUST match
-`gate.Release.Thread()` (and payload) against the message it transmits — a
-non-nil `*Release` alone is forgeable as an inert `new(gate.Release)` (empty
-thread, nil payload); pinned by `internal/gate/surface_test.go`.
+**Security notes (WP-02 quality pass):** delivery MUST match
+`gate.Release.Thread()` **and** `gate.Release.ID()` against the message it
+transmits — thread alone permits replaying an approved Release for a
+*different* message in the same thread, and a non-nil `*Release` alone is
+forgeable as an inert `new(gate.Release)` (empty thread/id, nil payload;
+pinned by `internal/gate/surface_test.go`). Do **not** rely on payload
+identity: `Payload()` is an uncomparable `any` (naive `==` panics on an
+Envelope) and the minted value aliases the caller's slices — the
+approved-content-is-what-sends guarantee rests on WP-03's
+payload-immutability note.
 
 **Test plan:** kill/reconnect matrix (nothing lost, nothing duplicated beyond
 at-least-once + id dedupe); ack bookkeeping vs sweeper; revocation severs live
