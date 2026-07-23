@@ -15,7 +15,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 |---|---|---|---|---|
 | WP-01 | `internal/envelope` — signed envelope | DONE | — | T-01 T-02 T-16 S-05 ✓ |
 | WP-02 | `internal/gate` — approval/grant state machine | DONE | — | — |
-| WP-03 | `internal/relay/store` — SQLite persistence | TODO | WP-01 | T-03 T-09 |
+| WP-03 | `internal/relay/store` — SQLite persistence | IN_PROGRESS | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | TODO | WP-04 | T-06 |
 | WP-06 | relay OAuth: embedded AS + client registration | TODO | WP-05 | T-06 |
