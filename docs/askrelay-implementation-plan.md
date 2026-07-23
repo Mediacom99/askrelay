@@ -14,7 +14,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP | Package | Status | Depends on | Gated by |
 |---|---|---|---|---|
 | WP-01 | `internal/envelope` — signed envelope | DONE | — | T-01 T-02 T-16 S-05 ✓ |
-| WP-02 | `internal/gate` — approval/grant state machine | IN_PROGRESS | — | — |
+| WP-02 | `internal/gate` — approval/grant state machine | DONE | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | TODO | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | TODO | WP-04 | T-06 |
@@ -306,7 +306,7 @@ fails, with zero non-stdlib deps beyond `google/uuid`.
 
 ### WP-02 — `internal/gate`
 
-**Status:** TODO · **Depends on:** — · **Gated by:** — ·
+**Status:** DONE (2026-07-23) · **Depends on:** — · **Gated by:** — ·
 **Spec:** arch §5.3; D-03, D-11.
 
 **Goal:** the approval/grant state machine, pure and I/O-free — and
