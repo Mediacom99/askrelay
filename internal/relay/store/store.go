@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"sync"
 
 	_ "modernc.org/sqlite" // registers the pure-Go "sqlite" driver (T-03)
 )
@@ -12,12 +13,12 @@ import (
 var migrationFS embed.FS
 
 // Store is the single owner of the relay's SQLite database. All writes go
-// through its methods, serialized by a store-level mutex (T-03 single-writer
-// discipline: WAL allows concurrent readers, but one writer at a time avoids
-// SQLITE_BUSY churn under modernc's driver); the mutex arrives with the first
-// write method.
+// through its methods, serialized by mu (T-03 single-writer discipline: WAL
+// allows concurrent readers, but one writer at a time avoids SQLITE_BUSY
+// churn under modernc's driver). Every write method routes through writeTx.
 type Store struct {
 	db *sql.DB
+	mu sync.Mutex // held for the duration of every write transaction
 }
 
 // Open opens (creating if absent) the database at path, applies the pragmas
