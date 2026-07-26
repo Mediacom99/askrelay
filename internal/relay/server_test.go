@@ -15,18 +15,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mediacom99/askrelay/internal/relay/oauth"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "relay.db"))
+	dir := t.TempDir()
+	st, err := store.Open(filepath.Join(dir, "relay.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
 	t.Cleanup(func() { st.Close() })
+	iss, err := oauth.NewIssuer(filepath.Join(dir, "signing.key"), "https://relay.example.com", time.Hour)
+	if err != nil {
+		t.Fatalf("oauth.NewIssuer: %v", err)
+	}
 	cfg := Config{ListenAddr: "127.0.0.1:0", DBPath: "x", BaseURL: "https://relay.example.com"}
-	return NewServer(cfg, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return NewServer(cfg, st, iss, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 // serve routes a request through the full handler chain (mux + logging) so
@@ -99,6 +105,14 @@ func TestEnrollHappyPath(t *testing.T) {
 	}
 	if resp.PersonID == "" || resp.DeviceID == "" || resp.BaseURL != "https://relay.example.com" {
 		t.Errorf("response missing fields: %+v", resp)
+	}
+	// The returned device credential must verify as this device's.
+	person, device, err := s.issuer.VerifyDeviceCredential(resp.DeviceCredential, time.Now())
+	if err != nil {
+		t.Fatalf("returned device_credential does not verify: %v", err)
+	}
+	if person != resp.PersonID || device != resp.DeviceID {
+		t.Errorf("credential = (person %q, device %q), want (%q, %q)", person, device, resp.PersonID, resp.DeviceID)
 	}
 }
 

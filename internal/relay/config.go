@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -12,10 +13,11 @@ import (
 // config file. Precedence is flag > env > default, achieved by baking the env
 // fallback into each flag's default value.
 type Config struct {
-	ListenAddr string        // -listen       / ASKRELAY_LISTEN        (default 127.0.0.1:8080)
-	DBPath     string        // -db           / ASKRELAY_DB            (default askrelay.db)
-	BaseURL    string        // -base-url      / ASKRELAY_BASE_URL      (public http(s) URL; required)
-	InviteTTL  time.Duration // -invite-ttl    / ASKRELAY_INVITE_TTL    (default 24h)
+	ListenAddr     string        // -listen       / ASKRELAY_LISTEN        (default 127.0.0.1:8080)
+	DBPath         string        // -db           / ASKRELAY_DB            (default askrelay.db)
+	BaseURL        string        // -base-url      / ASKRELAY_BASE_URL      (public http(s) URL; required)
+	SigningKeyPath string        // -signing-key   / ASKRELAY_SIGNING_KEY   (ed25519 token key; default signing.key beside the DB)
+	InviteTTL      time.Duration // -invite-ttl    / ASKRELAY_INVITE_TTL    (default 24h)
 
 	// Store knobs (T-09 retention + WP-01/03 freshness), 1h floor per T-09.
 	AckGrace time.Duration // -ack-grace      / ASKRELAY_ACK_GRACE      (default 72h)
@@ -34,6 +36,7 @@ func LoadConfig(args []string) (Config, error) {
 	fs.StringVar(&c.ListenAddr, "listen", envOr("ASKRELAY_LISTEN", "127.0.0.1:8080"), "listen address")
 	fs.StringVar(&c.DBPath, "db", envOr("ASKRELAY_DB", "askrelay.db"), "sqlite database path")
 	fs.StringVar(&c.BaseURL, "base-url", os.Getenv("ASKRELAY_BASE_URL"), "public base URL, e.g. https://relay.example.com (required)")
+	fs.StringVar(&c.SigningKeyPath, "signing-key", os.Getenv("ASKRELAY_SIGNING_KEY"), "ed25519 token-signing key path (default: signing.key beside the db)")
 	fs.DurationVar(&c.InviteTTL, "invite-ttl", envDur("ASKRELAY_INVITE_TTL", 24*time.Hour), "invite lifetime")
 	fs.DurationVar(&c.AckGrace, "ack-grace", envDur("ASKRELAY_ACK_GRACE", 72*time.Hour), "delete acked messages this long after their last ack")
 	fs.DurationVar(&c.HardTTL, "hard-ttl", envDur("ASKRELAY_HARD_TTL", 720*time.Hour), "delete any message this long after receipt")
@@ -41,6 +44,11 @@ func LoadConfig(args []string) (Config, error) {
 	fs.DurationVar(&c.MaxSkew, "fresh-max-skew", envDur("ASKRELAY_FRESH_MAX_SKEW", 5*time.Minute), "reject messages more than this far in the future")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+	// Default the signing key beside the DB — one -db usually implies the whole
+	// data dir, so the common case needs no extra flag.
+	if c.SigningKeyPath == "" {
+		c.SigningKeyPath = filepath.Join(filepath.Dir(c.DBPath), "signing.key")
 	}
 	if err := c.Validate(); err != nil {
 		return Config{}, err

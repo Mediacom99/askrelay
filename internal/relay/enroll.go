@@ -23,10 +23,10 @@ type enrollRequest struct {
 }
 
 type enrollResponse struct {
-	PersonID string `json:"person_id"`
-	DeviceID string `json:"device_id"`
-	BaseURL  string `json:"base_url"`
-	// The WS device credential is added by WP-05 (needs the T-06 token infra).
+	PersonID         string `json:"person_id"`
+	DeviceID         string `json:"device_id"`
+	BaseURL          string `json:"base_url"`
+	DeviceCredential string `json:"device_credential"` // long-lived WS credential (T-06)
 }
 
 // handleEnroll consumes a single-use invite and registers a device (arch
@@ -65,11 +65,19 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cred, err := s.issuer.MintDeviceCredential(person.ID, device.ID, time.Now().UTC())
+	if err != nil {
+		s.log.Error("mint device credential", "err", err) // device is enrolled but unusable
+		s.httpError(w, http.StatusInternalServerError, "enrollment failed")
+		return
+	}
+
 	s.log.Info("device enrolled", "person", person.ID, "device", device.ID)
 	writeJSON(w, http.StatusOK, enrollResponse{
-		PersonID: person.ID,
-		DeviceID: device.ID,
-		BaseURL:  s.cfg.BaseURL,
+		PersonID:         person.ID,
+		DeviceID:         device.ID,
+		BaseURL:          s.cfg.BaseURL,
+		DeviceCredential: cred,
 	})
 }
 

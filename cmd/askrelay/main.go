@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Mediacom99/askrelay/internal/relay"
+	"github.com/Mediacom99/askrelay/internal/relay/oauth"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
 
@@ -71,9 +72,14 @@ func cmdServe(args []string) error {
 	}
 	defer st.Close()
 
+	iss, err := oauth.NewIssuer(cfg.SigningKeyPath, cfg.BaseURL, time.Hour)
+	if err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return relay.NewServer(cfg, st, log).Run(ctx)
+	return relay.NewServer(cfg, st, iss, log).Run(ctx)
 }
 
 // cmdInvite mints an invite by opening the SQLite database directly — the
