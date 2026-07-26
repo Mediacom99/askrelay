@@ -69,45 +69,16 @@ func (s *Store) IngestMessage(e envelope.Envelope, senderID string, fresh Freshn
 	}
 
 	return s.writeTx(func(tx *sql.Tx) error {
-		// Dedup: the tombstone is the authoritative record (it outlives the
-		// message body the sweeper deletes).
-		var seen int
-		err := tx.QueryRow(`SELECT 1 FROM message_tombstones WHERE id = ?`, e.ID).Scan(&seen)
-		if err == nil {
+		seen, err := tombstoneSeen(tx, e.ID)
+		if err != nil {
+			return err
+		}
+		if seen {
 			return ErrReplay
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("store: dedup check: %w", err)
+		if err := ensureThread(tx, e, senderID, now); err != nil {
+			return err
 		}
-
-		// Ensure the thread: create new at input-required from the action,
-		// never from e.State; leave an existing thread's state untouched
-		// (subtask 5 transitions it via the gate). On an EXISTING thread the
-		// message's two ends must be its two parties (in either direction — a
-		// reply legitimately flows recipient→initiator); otherwise an
-		// unrelated person who knows the thread id could inject into a 1:1
-		// conversation (D-05). New threads are defined by their first message.
-		var st, initiator, recipient string
-		err = tx.QueryRow(`SELECT state, initiator_id, recipient_id FROM threads WHERE id = ?`, e.Thread).
-			Scan(&st, &initiator, &recipient)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			if _, err := tx.Exec(
-				`INSERT INTO threads (id, initiator_id, recipient_id, state, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?)`,
-				e.Thread, senderID, e.To, string(a2a.StateInputRequired), now.Unix(), now.Unix()); err != nil {
-				return fmt.Errorf("store: create thread: %w", err)
-			}
-		case err != nil:
-			return fmt.Errorf("store: find thread: %w", err)
-		default:
-			parties := (senderID == initiator && e.To == recipient) ||
-				(senderID == recipient && e.To == initiator)
-			if !parties {
-				return ErrNotParticipant
-			}
-		}
-
 		if _, err := tx.Exec(
 			`INSERT INTO messages (id, thread_id, sender_id, envelope, sent_at, received_at, via_grant)
 			 VALUES (?, ?, ?, ?, ?, ?, 0)`,
@@ -121,39 +92,89 @@ func (s *Store) IngestMessage(e envelope.Envelope, senderID string, fresh Freshn
 			`INSERT INTO message_tombstones (id, sent_at) VALUES (?, ?)`, e.ID, e.SentAt.Unix()); err != nil {
 			return fmt.Errorf("store: insert tombstone: %w", err)
 		}
+		return fanOutDeliveries(tx, e.ID, e.To)
+	})
+}
 
-		// Fan out to every ACTIVE recipient device — the T-09 "all devices
-		// acked" set is defined at ingest time. Drain the cursor before
-		// issuing writes on the same tx (modernc/SQLite dislikes an open
-		// read cursor mid-write).
-		rows, err := tx.Query(
-			`SELECT id FROM devices WHERE person_id = ? AND revoked_at IS NULL`, e.To)
-		if err != nil {
-			return fmt.Errorf("store: recipient devices: %w", err)
-		}
-		var deviceIDs []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return fmt.Errorf("store: scan device: %w", err)
-			}
-			deviceIDs = append(deviceIDs, id)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return fmt.Errorf("store: iterate devices: %w", err)
-		}
-		rows.Close()
+// tombstoneSeen reports whether id already has a replay tombstone — the
+// authoritative dedup record, which outlives the message body the sweeper
+// deletes.
+func tombstoneSeen(tx *sql.Tx, id string) (bool, error) {
+	var one int
+	err := tx.QueryRow(`SELECT 1 FROM message_tombstones WHERE id = ?`, id).Scan(&one)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return false, fmt.Errorf("store: dedup check: %w", err)
+}
 
-		for _, id := range deviceIDs {
-			if _, err := tx.Exec(
-				`INSERT INTO deliveries (message_id, device_id) VALUES (?, ?)`, e.ID, id); err != nil {
-				return fmt.Errorf("store: insert delivery: %w", err)
-			}
+// ensureThread creates the thread on its first message (at input-required,
+// from the action — never from e.State, F3) or, for an existing thread,
+// verifies the message's two ends are its two parties. A reply legitimately
+// flows recipient→initiator, so either ordering is allowed; an unrelated
+// person who knows the thread id is refused with ErrNotParticipant, holding
+// the 1:1 invariant (D-05). It never transitions an existing thread's state —
+// the gate does that (approval.go).
+func ensureThread(tx *sql.Tx, e envelope.Envelope, senderID string, now time.Time) error {
+	var st, initiator, recipient string
+	err := tx.QueryRow(`SELECT state, initiator_id, recipient_id FROM threads WHERE id = ?`, e.Thread).
+		Scan(&st, &initiator, &recipient)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := tx.Exec(
+			`INSERT INTO threads (id, initiator_id, recipient_id, state, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			e.Thread, senderID, e.To, string(a2a.StateInputRequired), now.Unix(), now.Unix()); err != nil {
+			return fmt.Errorf("store: create thread: %w", err)
 		}
 		return nil
-	})
+	case err != nil:
+		return fmt.Errorf("store: find thread: %w", err)
+	default:
+		parties := (senderID == initiator && e.To == recipient) ||
+			(senderID == recipient && e.To == initiator)
+		if !parties {
+			return ErrNotParticipant
+		}
+		return nil
+	}
+}
+
+// fanOutDeliveries inserts one delivery row per ACTIVE recipient device — the
+// T-09 "all devices acked" set, fixed at ingest time. The cursor is drained
+// before the writes because modernc/SQLite dislikes an open read cursor
+// mid-write on the same transaction.
+func fanOutDeliveries(tx *sql.Tx, messageID, recipientID string) error {
+	rows, err := tx.Query(
+		`SELECT id FROM devices WHERE person_id = ? AND revoked_at IS NULL`, recipientID)
+	if err != nil {
+		return fmt.Errorf("store: recipient devices: %w", err)
+	}
+	var deviceIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("store: scan device: %w", err)
+		}
+		deviceIDs = append(deviceIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return fmt.Errorf("store: iterate devices: %w", err)
+	}
+	rows.Close()
+
+	for _, id := range deviceIDs {
+		if _, err := tx.Exec(
+			`INSERT INTO deliveries (message_id, device_id) VALUES (?, ?)`, messageID, id); err != nil {
+			return fmt.Errorf("store: insert delivery: %w", err)
+		}
+	}
+	return nil
 }
 
 // Inbox lists a device's messages with an unacked delivery, oldest first.

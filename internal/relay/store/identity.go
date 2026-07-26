@@ -124,23 +124,9 @@ func (s *Store) Enroll(token string, pubkey ed25519.PublicKey, label string, now
 			return fmt.Errorf("store: invite email: %w", err)
 		}
 
-		p = Person{Email: email}
-		var created int64
-		err = tx.QueryRow(`SELECT id, label, created_at FROM persons WHERE email = ?`, email).
-			Scan(&p.ID, &p.Label, &created)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			p.ID = uuid.Must(uuid.NewV7()).String()
-			p.CreatedAt = now
-			if _, err := tx.Exec(
-				`INSERT INTO persons (id, email, label, created_at) VALUES (?, ?, '', ?)`,
-				p.ID, email, now.Unix()); err != nil {
-				return fmt.Errorf("store: create person: %w", err)
-			}
-		case err != nil:
-			return fmt.Errorf("store: find person: %w", err)
-		default:
-			p.CreatedAt = time.Unix(created, 0).UTC()
+		p, err = findOrCreatePerson(tx, email, now)
+		if err != nil {
+			return err
 		}
 
 		// Pre-check the globally-unique pubkey so a duplicate returns the
@@ -171,6 +157,30 @@ func (s *Store) Enroll(token string, pubkey ed25519.PublicKey, label string, now
 		return Person{}, Device{}, err
 	}
 	return p, d, nil
+}
+
+// findOrCreatePerson returns the roster person for email, creating one (fresh
+// uuidv7) if none exists — enrollment is how a person joins the roster.
+func findOrCreatePerson(tx *sql.Tx, email string, now time.Time) (Person, error) {
+	p := Person{Email: email}
+	var created int64
+	err := tx.QueryRow(`SELECT id, label, created_at FROM persons WHERE email = ?`, email).
+		Scan(&p.ID, &p.Label, &created)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		p.ID = uuid.Must(uuid.NewV7()).String()
+		p.CreatedAt = now
+		if _, err := tx.Exec(
+			`INSERT INTO persons (id, email, label, created_at) VALUES (?, ?, '', ?)`,
+			p.ID, email, now.Unix()); err != nil {
+			return Person{}, fmt.Errorf("store: create person: %w", err)
+		}
+	case err != nil:
+		return Person{}, fmt.Errorf("store: find person: %w", err)
+	default:
+		p.CreatedAt = time.Unix(created, 0).UTC()
+	}
+	return p, nil
 }
 
 // RevokeDevice marks a device revoked, effective immediately (arch §4.3:
