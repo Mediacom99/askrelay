@@ -26,11 +26,24 @@ func (s *Store) CreateDraft(threadID, authorID string, e envelope.Envelope, now 
 		return "", fmt.Errorf("store: marshal draft: %w", err)
 	}
 	err = s.writeTx(func(tx *sql.Tx) error {
-		_, err := tx.Exec(
+		// The author must be one of the thread's two parties — an unrelated
+		// person cannot author a reply on someone else's 1:1 thread (D-05).
+		var initiator, recipient string
+		err := tx.QueryRow(`SELECT initiator_id, recipient_id FROM threads WHERE id = ?`, threadID).
+			Scan(&initiator, &recipient)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("store: find thread: %w", err)
+		}
+		if authorID != initiator && authorID != recipient {
+			return ErrNotParticipant
+		}
+		if _, err := tx.Exec(
 			`INSERT INTO drafts (id, thread_id, author_id, envelope, state, created_at)
 			 VALUES (?, ?, ?, ?, 'pending_review', ?)`,
-			e.ID, threadID, authorID, blob, now.Unix())
-		if err != nil {
+			e.ID, threadID, authorID, blob, now.Unix()); err != nil {
 			return fmt.Errorf("store: insert draft: %w", err)
 		}
 		return nil

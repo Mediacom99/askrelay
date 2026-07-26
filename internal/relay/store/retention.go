@@ -11,12 +11,6 @@ import (
 type RetentionPolicy struct {
 	AckGrace time.Duration // delete an all-acked message this long after its last ack
 	HardTTL  time.Duration // delete ANY message / decided draft this long after receipt / decision
-	// TombstoneTTL prunes a replay tombstone this long after its SIGNED sent_at.
-	// It MUST be >= the ingest Freshness.MaxAge: pruning on sent_at means a
-	// tombstone is dropped exactly when a replay carrying it would already be
-	// refused as stale, so the replay guard is never shortened below the
-	// freshness window.
-	TombstoneTTL time.Duration
 }
 
 // SweepMessages deletes message bodies that are either fully acked past the
@@ -73,12 +67,14 @@ func (s *Store) SweepDrafts(p RetentionPolicy, now time.Time) (int, error) {
 	return int(n), err
 }
 
-// PruneTombstones deletes replay tombstones whose SIGNED sent_at is far enough
-// past that a replay carrying that id would be refused as stale by the ingest
-// freshness check anyway — so the guard is bounded without ever being
-// shortened below the freshness window (see RetentionPolicy.TombstoneTTL).
-func (s *Store) PruneTombstones(p RetentionPolicy, now time.Time) (int, error) {
-	cutoff := now.Add(-p.TombstoneTTL).Unix()
+// PruneTombstones deletes replay tombstones whose SIGNED sent_at is older than
+// the ingest freshness window — the exact horizon past which a replay carrying
+// that id is already refused as ErrNotFresh. It takes the SAME Freshness the
+// ingest path uses, so the prune horizon IS the freshness horizon by
+// construction: there is no separate TTL that could be misconfigured below it
+// and silently reopen the replay window.
+func (s *Store) PruneTombstones(fresh Freshness, now time.Time) (int, error) {
+	cutoff := now.Add(-fresh.MaxAge).Unix()
 	var n int64
 	err := s.writeTx(func(tx *sql.Tx) error {
 		res, err := tx.Exec(`DELETE FROM message_tombstones WHERE sent_at < ?`, cutoff)

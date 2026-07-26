@@ -21,6 +21,10 @@ var (
 	// ErrNotFresh: sent_at is outside the accepted window — too old (past the
 	// retention horizon) or too far future (clock-skew cap).
 	ErrNotFresh = errors.New("store: message not fresh")
+	// ErrNotParticipant: the message's sender/recipient (or a draft's author)
+	// are not the two parties of the thread being written into — the store
+	// enforces the 1:1 thread invariant (D-05), not just FK existence.
+	ErrNotParticipant = errors.New("store: not a thread participant")
 )
 
 // Freshness bounds a sender-asserted sent_at both ways (WP-01 note): a message
@@ -78,9 +82,14 @@ func (s *Store) IngestMessage(e envelope.Envelope, senderID string, fresh Freshn
 
 		// Ensure the thread: create new at input-required from the action,
 		// never from e.State; leave an existing thread's state untouched
-		// (subtask 5 transitions it via the gate).
-		var st string
-		err = tx.QueryRow(`SELECT state FROM threads WHERE id = ?`, e.Thread).Scan(&st)
+		// (subtask 5 transitions it via the gate). On an EXISTING thread the
+		// message's two ends must be its two parties (in either direction — a
+		// reply legitimately flows recipient→initiator); otherwise an
+		// unrelated person who knows the thread id could inject into a 1:1
+		// conversation (D-05). New threads are defined by their first message.
+		var st, initiator, recipient string
+		err = tx.QueryRow(`SELECT state, initiator_id, recipient_id FROM threads WHERE id = ?`, e.Thread).
+			Scan(&st, &initiator, &recipient)
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			if _, err := tx.Exec(
@@ -91,6 +100,12 @@ func (s *Store) IngestMessage(e envelope.Envelope, senderID string, fresh Freshn
 			}
 		case err != nil:
 			return fmt.Errorf("store: find thread: %w", err)
+		default:
+			parties := (senderID == initiator && e.To == recipient) ||
+				(senderID == recipient && e.To == initiator)
+			if !parties {
+				return ErrNotParticipant
+			}
 		}
 
 		if _, err := tx.Exec(

@@ -10,9 +10,8 @@ import (
 )
 
 var testPolicy = RetentionPolicy{
-	AckGrace:     72 * time.Hour,
-	HardTTL:      30 * 24 * time.Hour,
-	TombstoneTTL: 24 * time.Hour,
+	AckGrace: 72 * time.Hour,
+	HardTTL:  30 * 24 * time.Hour,
 }
 
 func count(t *testing.T, s *Store, q string, args ...any) int {
@@ -168,15 +167,16 @@ func TestPruneTombstones(t *testing.T) {
 	t0 := time.Unix(1_700_000_000, 0).UTC()
 	msg, _, _, _ := seedInbound(t, s, t0) // tombstone.sent_at == t0
 
-	// Younger than TombstoneTTL: survives (a replay could still be fresh).
-	if n, _ := s.PruneTombstones(testPolicy, t0.Add(24*time.Hour-time.Minute)); n != 0 {
+	// Within the freshness window (testFresh.MaxAge == 24h): survives, because
+	// a replay could still pass the freshness check.
+	if n, _ := s.PruneTombstones(testFresh, t0.Add(24*time.Hour-time.Minute)); n != 0 {
 		t.Fatalf("pruned %d fresh tombstone, want 0", n)
 	}
 	if count(t, s, `SELECT count(*) FROM message_tombstones WHERE id=?`, msg) != 1 {
 		t.Fatal("tombstone pruned too early")
 	}
-	// Past TombstoneTTL: a replay would be stale anyway, so prune.
-	if n, _ := s.PruneTombstones(testPolicy, t0.Add(24*time.Hour+time.Minute)); n != 1 {
+	// Past the freshness window: a replay would be stale anyway, so prune.
+	if n, _ := s.PruneTombstones(testFresh, t0.Add(24*time.Hour+time.Minute)); n != 1 {
 		t.Errorf("pruned %d stale tombstone, want 1", n)
 	}
 }

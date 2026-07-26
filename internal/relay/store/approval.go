@@ -132,7 +132,11 @@ func (s *Store) ApproveInboundViaGrant(threadID, granterID, messageID string, no
 			string(next), now.Unix(), threadID); err != nil {
 			return fmt.Errorf("store: update thread: %w", err)
 		}
-		if _, err := tx.Exec(`UPDATE messages SET via_grant=1 WHERE id=?`, messageID); err != nil {
+		// Scope the audit mark by thread too: a messageID from a different
+		// thread than the granted one must never have its immortal via_grant
+		// row flipped by a caller mix-up.
+		if _, err := tx.Exec(`UPDATE messages SET via_grant=1 WHERE id=? AND thread_id=?`,
+			messageID, threadID); err != nil {
 			return fmt.Errorf("store: mark via_grant: %w", err)
 		}
 		fired = true

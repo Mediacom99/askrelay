@@ -17,7 +17,7 @@ CREATE TABLE persons (
 CREATE TABLE devices (
     id         TEXT PRIMARY KEY,              -- uuidv7
     person_id  TEXT NOT NULL REFERENCES persons(id),
-    pubkey     BLOB NOT NULL UNIQUE,          -- raw 32-byte Ed25519 public key
+    pubkey     BLOB NOT NULL UNIQUE CHECK (length(pubkey) = 32),  -- raw 32-byte Ed25519 public key
     label      TEXT NOT NULL DEFAULT '',
     created_at INTEGER NOT NULL,
     revoked_at INTEGER                        -- NULL = active

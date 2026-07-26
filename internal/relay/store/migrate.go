@@ -2,16 +2,28 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
+	"path"
 	"sort"
+	"strconv"
+	"strings"
 )
 
+// ErrSchemaTooNew means the database's user_version is ahead of the embedded
+// migration set — an older binary opening a database a newer binary already
+// migrated (a self-host rollback). The store refuses rather than run against a
+// schema it does not fully understand.
+var ErrSchemaTooNew = errors.New("store: database schema is newer than this binary")
+
 // migrate applies migrations from fsys newer than the database's
-// PRAGMA user_version, in filename order (0001_*.sql, 0002_*.sql, …), each
-// inside its own transaction. Re-running is a no-op: idempotency comes from
-// the version check, not from the SQL. fsys is a parameter (Open passes the
-// embedded set) so failure paths are testable with a synthetic fs.
+// PRAGMA user_version, each inside its own transaction. Re-running is a no-op:
+// idempotency comes from the version check, not from the SQL. fsys is a
+// parameter (Open passes the embedded set) so failure paths are testable with
+// a synthetic fs. Each migration's version is parsed from its NNNN_ filename
+// prefix and asserted contiguous from 1, so a deleted or gapped file fails
+// loudly rather than silently renumbering later migrations.
 func migrate(db *sql.DB, fsys fs.FS) error {
 	names, err := fs.Glob(fsys, "migrations/*.sql")
 	if err != nil {
@@ -23,9 +35,19 @@ func migrate(db *sql.DB, fsys fs.FS) error {
 	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return fmt.Errorf("store: read user_version: %w", err)
 	}
+	if version > len(names) {
+		return fmt.Errorf("store: user_version %d exceeds %d embedded migrations: %w",
+			version, len(names), ErrSchemaTooNew)
+	}
 
 	for i, name := range names {
-		v := i + 1 // migration N is the file at sorted position N-1
+		v, err := migrationVersion(name)
+		if err != nil {
+			return err
+		}
+		if v != i+1 {
+			return fmt.Errorf("store: migration %q is version %d, expected %d (non-contiguous)", name, v, i+1)
+		}
 		if v <= version {
 			continue
 		}
@@ -52,4 +74,19 @@ func migrate(db *sql.DB, fsys fs.FS) error {
 		}
 	}
 	return nil
+}
+
+// migrationVersion parses the leading NNNN of a migration filename
+// (migrations/0001_init.sql → 1). The version is authoritative — never the
+// file's position in the list.
+func migrationVersion(name string) (int, error) {
+	prefix, _, ok := strings.Cut(path.Base(name), "_")
+	if !ok {
+		return 0, fmt.Errorf("store: migration %q has no NNNN_ prefix", name)
+	}
+	v, err := strconv.Atoi(prefix)
+	if err != nil || v < 1 {
+		return 0, fmt.Errorf("store: migration %q has a bad version prefix %q", name, prefix)
+	}
+	return v, nil
 }

@@ -20,6 +20,10 @@ import (
 var (
 	ErrNotFound      = errors.New("store: not found")
 	ErrInviteInvalid = errors.New("store: invite invalid")
+	// ErrKeyInUse means the Ed25519 public key is already registered to a
+	// device (they are globally unique). WP-04's re-enrollment path branches
+	// on it rather than a raw SQLite constraint string.
+	ErrKeyInUse = errors.New("store: device key already in use")
 )
 
 // Person is a roster entry (arch §4.3: no row, no mail).
@@ -94,6 +98,9 @@ func (s *Store) CreateInvite(email string, ttl time.Duration, now time.Time) (st
 // email, and the device row is inserted. Any invalid invite — unknown,
 // expired, used — is the same ErrInviteInvalid.
 func (s *Store) Enroll(token string, pubkey ed25519.PublicKey, label string, now time.Time) (Person, Device, error) {
+	if len(pubkey) != ed25519.PublicKeySize {
+		return Person{}, Device{}, fmt.Errorf("store: enroll: pubkey must be %d bytes, got %d", ed25519.PublicKeySize, len(pubkey))
+	}
 	var p Person
 	var d Device
 	err := s.writeTx(func(tx *sql.Tx) error {
@@ -134,6 +141,19 @@ func (s *Store) Enroll(token string, pubkey ed25519.PublicKey, label string, now
 			return fmt.Errorf("store: find person: %w", err)
 		default:
 			p.CreatedAt = time.Unix(created, 0).UTC()
+		}
+
+		// Pre-check the globally-unique pubkey so a duplicate returns the
+		// ErrKeyInUse sentinel, not a raw SQLite UNIQUE-constraint string
+		// (T-17). Safe inside writeTx: the writer mutex serializes this
+		// check-then-insert, so no racing enroll can slip between them.
+		var dupe int
+		err = tx.QueryRow(`SELECT 1 FROM devices WHERE pubkey = ?`, []byte(pubkey)).Scan(&dupe)
+		if err == nil {
+			return ErrKeyInUse
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("store: device dup check: %w", err)
 		}
 
 		d = Device{
