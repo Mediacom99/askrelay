@@ -1,0 +1,28 @@
+# systemd unit stub for askrelay (WP-04). Copy to /etc/systemd/system/,
+# edit the paths/URL, then: systemctl daemon-reload && systemctl enable --now askrelay
+[Unit]
+Description=askrelay relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=askrelay
+Group=askrelay
+Environment=ASKRELAY_BASE_URL=https://relay.example.com
+Environment=ASKRELAY_DB=/var/lib/askrelay/askrelay.db
+Environment=ASKRELAY_LISTEN=127.0.0.1:8080
+ExecStart=/usr/local/bin/askrelay serve
+Restart=on-failure
+RestartSec=2
+
+# Hardening (the relay needs only its data dir).
+StateDirectory=askrelay
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/askrelay
+
+[Install]
+WantedBy=multi-user.target
