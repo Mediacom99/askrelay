@@ -15,7 +15,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 |---|---|---|---|---|
 | WP-01 | `internal/envelope` — signed envelope | DONE | — | T-01 T-02 T-16 S-05 ✓ |
 | WP-02 | `internal/gate` — approval/grant state machine | DONE | — | — |
-| WP-03 | `internal/relay/store` — SQLite persistence | IN_PROGRESS | WP-01 | T-03 T-09 |
+| WP-03 | `internal/relay/store` — SQLite persistence | DONE | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | TODO | WP-04 | T-06 |
 | WP-06 | relay OAuth: embedded AS + client registration | TODO | WP-05 | T-06 |
@@ -334,7 +334,7 @@ seven A2A states, and treat unknown/attacker-chosen values as invalid.
 
 ### WP-03 — `internal/relay/store`
 
-**Status:** TODO · **Depends on:** WP-01 · **Gated by:** T-03 T-09 ·
+**Status:** DONE (2026-07-26, PR #3) · **Depends on:** WP-01 · **Gated by:** T-03 T-09 ·
 **Spec:** arch §4.1, §4.2, §4.3.
 
 **Goal:** SQLite persistence: embedded-SQL schema + migrations; persons,
@@ -450,6 +450,15 @@ resource. Also apply the ingress `io.LimitReader` (see WP-03) on this surface.
 Inbound deliberately has no `Release`-style capability token — the async
 design doesn't need one — so this is a wiring discipline the WP-07 review
 must explicitly check, not a type-level guarantee.
+
+**Security note (WP-03 quality pass):** the boundary MUST verify the signing
+device belongs to the claimed `envelope.From.Person` before calling
+`store.IngestMessage` with the resolved `senderID`. The store enforces that
+the *resolved* sender is one of the thread's two parties (`ErrNotParticipant`,
+D-05 1:1), but it does **not** check that the signature matches the claimed
+`From.Person` — that binding (`ActiveDeviceByPubkey` → device's person ==
+`From.Person`) is the caller's job. Same obligation on WP-04's `/enroll` and
+any other ingest path.
 
 ### WP-08 — WS hub, delivery, retention sweeper
 
@@ -655,6 +664,20 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
 - 2026-07-24 — WP-03 subtask 2: `oauth_*` DDL moved WP-03 → WP-05 (the schema
   is migration-versioned; table shapes freeze only when the owning WP designs
   them — WP-05 ships `0002_oauth.sql`). Changed: WP-03, WP-05.
+- 2026-07-26 — **WP-03 DONE** (PR #3; 7 subtasks + three-agent quality pass +
+  maintainer-approved fixes). Dep added: `modernc.org/sqlite v1.54.0` (§3 pin,
+  pure-Go, CGO stays off). F3 + TOCTOU close by API shape — the approval
+  methods take no state parameter, so a forged-state call can't be written, and
+  read/gate/write share one `writeTx`. The quality pass (all three agents
+  converged) produced two in-WP fixes and one cross-WP obligation: **cross-thread
+  injection** — `IngestMessage`/`CreateDraft` now enforce thread membership
+  (`ErrNotParticipant`, D-05); **replay-on-misconfig** — deleted the
+  `TombstoneTTL` knob, `PruneTombstones` takes the ingest `Freshness` so the
+  prune horizon *is* the freshness horizon; and a **WP-04/07 note** (recorded in
+  the WP-07 entry): the boundary must bind the signing device to
+  `envelope.From.Person`, since the store only checks the resolved sender is a
+  participant. Retention keys the tombstone on the signed `sent_at`. Changed:
+  WP-04, WP-07.
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
