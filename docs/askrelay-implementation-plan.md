@@ -16,7 +16,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-01 | `internal/envelope` — signed envelope | DONE | — | T-01 T-02 T-16 S-05 ✓ |
 | WP-02 | `internal/gate` — approval/grant state machine | DONE | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | DONE | WP-01 | T-03 T-09 |
-| WP-04 | relay HTTP skeleton + enrollment | IN_PROGRESS | WP-03 | T-11 T-14 T-15 |
+| WP-04 | relay HTTP skeleton + enrollment | DONE | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | TODO | WP-04 | T-06 |
 | WP-06 | relay OAuth: embedded AS + client registration | TODO | WP-05 | T-06 |
 | WP-07 | relay MCP surface (tools + spotlighting) | TODO | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
@@ -381,7 +381,7 @@ overrides un-fetched); grants survive message deletion.
 
 ### WP-04 — relay HTTP skeleton + enrollment
 
-**Status:** TODO · **Depends on:** WP-03 · **Gated by:** T-11 T-14 T-15 ·
+**Status:** DONE (2026-07-26, PR #4) · **Depends on:** WP-03 · **Gated by:** T-11 T-14 T-15 ·
 **Spec:** arch §4.3, §4.5, §7, §11.
 
 **Goal:** `askrelay serve`: config from flags/env; ServeMux routes
@@ -678,6 +678,18 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
   `envelope.From.Person`, since the store only checks the resolved sender is a
   participant. Retention keys the tombstone on the signed `sent_at`. Changed:
   WP-04, WP-07.
+- 2026-07-26 — **WP-04 DONE** (PR #4; relay HTTP skeleton + enrollment). No new
+  dependency — stdlib `net/http` ServeMux (T-14), `slog` (T-15), `flag` (T-11).
+  Landed `askrelay serve` (`/healthz`, `POST /enroll/{token}`, graceful
+  shutdown), `askrelay invite`, `docs/deploy/` stubs. Config `Validate` enforces
+  the T-09 1h floor in code (the WP-03 lesson). Two calls: the WS device
+  credential is deferred to WP-05 (needs T-06 tokens); `invite` opens SQLite
+  directly (WAL handles contention, no admin socket). Quality pass skipped by
+  maintainer decision (direct code review); the batch "show all code" process
+  was a one-off — D-22 per-subtask loop resumes at WP-05. Exit criterion
+  verified end-to-end against the binary (real HTTP enroll → device enrolled;
+  token reuse → 403). Changed: WP-05 (inherits the deferred WS credential +
+  `0002_oauth.sql`).
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
