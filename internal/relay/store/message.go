@@ -99,8 +99,11 @@ func (s *Store) IngestMessage(e envelope.Envelope, senderID string, fresh Freshn
 			e.ID, e.Thread, senderID, blob, e.SentAt.Unix(), now.Unix()); err != nil {
 			return fmt.Errorf("store: insert message: %w", err)
 		}
+		// The tombstone records the SIGNED sent_at (not the relay clock) so it
+		// can be pruned against the same freshness horizon a replay is checked
+		// against (retention.go PruneTombstones).
 		if _, err := tx.Exec(
-			`INSERT INTO message_tombstones (id, seen_at) VALUES (?, ?)`, e.ID, now.Unix()); err != nil {
+			`INSERT INTO message_tombstones (id, sent_at) VALUES (?, ?)`, e.ID, e.SentAt.Unix()); err != nil {
 			return fmt.Errorf("store: insert tombstone: %w", err)
 		}
 

@@ -67,12 +67,15 @@ CREATE TABLE messages (
 CREATE INDEX idx_messages_thread   ON messages(thread_id);
 CREATE INDEX idx_messages_received ON messages(received_at);
 
--- Replay identity that OUTLIVES body deletion: the sweeper deletes a
--- message row, the tombstone stays until the sent_at freshness window can
--- no longer admit that id (the sweeper prunes it then, not before).
+-- Replay identity that OUTLIVES body deletion: the sweeper deletes a message
+-- row, the tombstone stays behind. sent_at is the SIGNED sender clock (the
+-- same value the ingest freshness check compares) — NOT the relay's — so the
+-- tombstone can be pruned exactly when a replay carrying that sent_at would be
+-- refused as stale anyway, with no dependence on relay-clock skew (see
+-- retention.go PruneTombstones).
 CREATE TABLE message_tombstones (
     id      TEXT PRIMARY KEY,
-    seen_at INTEGER NOT NULL
+    sent_at INTEGER NOT NULL
 ) STRICT;
 
 -- Per-recipient-device delivery/ack state — T-09's "all devices acked"
