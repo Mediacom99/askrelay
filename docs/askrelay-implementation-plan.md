@@ -15,7 +15,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 |---|---|---|---|---|
 | WP-01 | `internal/envelope` — signed envelope | DONE | — | T-01 T-02 T-16 S-05 ✓ |
 | WP-02 | `internal/gate` — approval/grant state machine | DONE | — | — |
-| WP-03 | `internal/relay/store` — SQLite persistence | TODO | WP-01 | T-03 T-09 |
+| WP-03 | `internal/relay/store` — SQLite persistence | IN_PROGRESS | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | TODO | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | TODO | WP-04 | T-06 |
 | WP-06 | relay OAuth: embedded AS + client registration | TODO | WP-05 | T-06 |
@@ -339,8 +339,10 @@ seven A2A states, and treat unknown/attacker-chosen values as invalid.
 
 **Goal:** SQLite persistence: embedded-SQL schema + migrations; persons,
 devices (revocation), invites (single-use, TTL), threads, messages
-(per-device delivery/ack), grants (immortal), oauth tables; retention sweeper
-queries (ack+grace, hard TTL).
+(per-device delivery/ack), grants (immortal); retention sweeper
+queries (ack+grace, hard TTL). *(`oauth_*` tables moved to WP-05,
+2026-07-24: their shape belongs to the OAuth design that WP owns; the
+migration harness applies them later as `0002_oauth.sql`.)*
 
 **Dependency added:** `modernc.org/sqlite v1.54.0`.
 
@@ -397,7 +399,9 @@ only the binary and a reverse proxy.
 
 **Goal:** RFC 9728 PRM endpoint (go-sdk `auth` handler), bearer validation
 middleware (EdDSA JWT, audience = relay base URL, person-identity claims),
-token issuance internals, device-credential tokens for `/ws`.
+token issuance internals, device-credential tokens for `/ws`. Owns the
+`oauth_*` schema, added as the store's `0002_oauth.sql` migration (moved
+from WP-03, 2026-07-24 — tables are shaped by this WP's design).
 
 **Dependencies added:** `github.com/modelcontextprotocol/go-sdk v1.6.1`,
 `github.com/golang-jwt/jwt/v5 v5.3.1`.
@@ -640,6 +644,17 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
   strategic framing (success definition, why-we-build, answering-side-moat lead,
   same-owner front-door candidate, security-response as top commitment,
   askmesh differentiation). Writeup: `docs/research/askmesh-autopsy.md`.
+- 2026-07-23 — **WP-02 DONE** (PR #2; first D-22 supervised run: 5 subtasks +
+  three-agent quality pass). T-17/T-18 ratified mid-WP. The pass converged on
+  one real hole — direction was caller-asserted, never validated against the
+  path called — fixed in-WP (ErrWrongDirection asserts, `Release.ID()`
+  identity). Changed later WPs: WP-03 (F3 integration contract, transactional
+  approval, payload immutability), WP-07 (single approve handler), WP-08
+  (Thread+ID match, never payload identity). Grant deliberately has no Kind
+  field — the WP that ships Kind #2 must widen Grant + Covers.
+- 2026-07-24 — WP-03 subtask 2: `oauth_*` DDL moved WP-03 → WP-05 (the schema
+  is migration-versioned; table shapes freeze only when the owning WP designs
+  them — WP-05 ships `0002_oauth.sql`). Changed: WP-03, WP-05.
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
