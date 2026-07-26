@@ -1,0 +1,7 @@
+# Reverse-proxy + automatic TLS for askrelay (WP-04 stub).
+# Caddy provisions and renews the certificate; the relay stays on localhost.
+#   caddy run --config docs/deploy/Caddyfile
+relay.example.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:8080
+}
