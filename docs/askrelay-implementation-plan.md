@@ -17,7 +17,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-02 | `internal/gate` — approval/grant state machine | DONE | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | DONE | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | DONE | WP-03 | T-11 T-14 T-15 |
-| WP-05 | relay OAuth: resource server + tokens | TODO | WP-04 | T-06 |
+| WP-05 | relay OAuth: resource server + tokens | IN_PROGRESS | WP-04 | T-06 |
 | WP-06 | relay OAuth: embedded AS + client registration | TODO | WP-05 | T-06 |
 | WP-07 | relay MCP surface (tools + spotlighting) | TODO | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
 | WP-08 | WS hub, delivery, retention sweeper | TODO | WP-03 WP-04 | T-04 T-09 |
