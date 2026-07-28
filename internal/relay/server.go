@@ -26,14 +26,19 @@ type Server struct {
 	issuer *oauth.Issuer
 	log    *slog.Logger
 	mux    *http.ServeMux
+	// bearer guards protected routes with access-token validation. WP-07 wraps
+	// /mcp with it; nothing uses it yet in the skeleton.
+	bearer func(http.Handler) http.Handler
 }
 
 // NewServer wires the routes; it does not listen. store, issuer, and log must
 // be non-nil.
 func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger) *Server {
 	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux()}
+	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
+	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))
 	return s
 }
 

@@ -58,6 +58,17 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
+func TestPRMRouteMounted(t *testing.T) {
+	s := testServer(t)
+	rec := s.serve(httptest.NewRequest("GET", "/.well-known/oauth-protected-resource", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("PRM route: status = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `"resource"`) {
+		t.Errorf("PRM body missing resource field: %s", rec.Body.String())
+	}
+}
+
 func TestRunGracefulShutdown(t *testing.T) {
 	s := testServer(t)
 	s.cfg.ListenAddr = "127.0.0.1:0" // ephemeral port
