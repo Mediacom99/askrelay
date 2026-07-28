@@ -399,9 +399,14 @@ only the binary and a reverse proxy.
 
 **Goal:** RFC 9728 PRM endpoint (go-sdk `auth` handler), bearer validation
 middleware (EdDSA JWT, audience = relay base URL, person-identity claims),
-token issuance internals, device-credential tokens for `/ws`. Owns the
-`oauth_*` schema, added as the store's `0002_oauth.sql` migration (moved
-from WP-03, 2026-07-24 — tables are shaped by this WP's design).
+token issuance internals, device-credential tokens for `/ws`.
+
+*(Tokens are STATELESS — decision 2026-07-26: access + device credentials are
+self-contained EdDSA JWTs, revocation via short life + a live
+`store.ActiveDeviceByID` check, so the resource server needs no oauth tables.
+Consequently `0002_oauth.sql` moved WP-05 → WP-06, which designs the AS's
+clients / PKCE-codes / refresh-token schema. Signing key = an ed25519 key file
+beside the DB, generated on first `serve`.)*
 
 **Dependencies added:** `github.com/modelcontextprotocol/go-sdk v1.6.1`,
 `github.com/golang-jwt/jwt/v5 v5.3.1`.
@@ -416,7 +421,10 @@ revoked device's tokens die; PRM document matches spec examples.
 
 **Goal:** authorization-code + PKCE flow whose "login" is invite-token/device
 credential entry (no passwords, no signup); DCR endpoint (claude.ai path);
-CIMD acceptance (ChatGPT path); JWKS; refresh tokens.
+CIMD acceptance (ChatGPT path); JWKS; refresh tokens. **Owns `0002_oauth.sql`**
+(moved from WP-05, 2026-07-26): the clients, PKCE authorization-codes, and
+refresh-token tables — all AS state, shaped by this WP's design (WP-05's
+resource server is stateless and ships no oauth tables).
 
 **Test plan:** full code+PKCE happy path scripted; PKCE downgrade attacks
 rejected; DCR'd and CIMD clients both reach a working token; state/nonce
