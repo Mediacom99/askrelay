@@ -27,8 +27,13 @@ const (
 // Issuer mints and verifies the relay's EdDSA-signed access tokens (T-06).
 // Tokens are stateless: verification is an offline signature + claim check.
 // Audience and issuer are both the relay base URL (RFC 8707 resource binding).
-// Revocation within a token's lifetime is enforced separately by the bearer
-// middleware's live device check, not here.
+//
+// Access tokens are person-scoped and are revoked ONLY by their short (1h)
+// lifetime — there is no per-request device check here, and access tokens
+// carry no device claim. Immediate revocation applies to device credentials
+// (the live store.ActiveDeviceByID check the /ws path performs, WP-08) and to
+// new-token issuance (the AS re-checks the device on every mint/refresh,
+// WP-06); an already-issued access token stays valid until it expires.
 type Issuer struct {
 	priv     ed25519.PrivateKey
 	pub      ed25519.PublicKey
@@ -123,26 +128,46 @@ func (i *Issuer) parse(token string, now time.Time) (AccessClaims, error) {
 	return claims, nil
 }
 
-// loadOrCreateKey reads a raw ed25519 private key from path, or generates and
-// writes one (0600) if the file does not exist. A wrong-length file is an
-// error rather than a silently-truncated key.
+// loadOrCreateKey loads the signing key from path, or generates one (0600) on
+// first run. Creation is atomic via O_CREATE|O_EXCL: if two processes race a
+// first start, exactly one generates the key and the rest adopt it, so they
+// can never split-brain onto different keys.
 func loadOrCreateKey(path string) (ed25519.PrivateKey, error) {
-	switch b, err := os.ReadFile(path); {
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	switch {
 	case err == nil:
-		if len(b) != ed25519.PrivateKeySize {
-			return nil, fmt.Errorf("oauth: signing key %q is %d bytes, want a %d-byte ed25519 key", path, len(b), ed25519.PrivateKeySize)
+		_, priv, gerr := ed25519.GenerateKey(rand.Reader)
+		if gerr != nil {
+			f.Close()
+			_ = os.Remove(path) // don't leave an empty key file behind
+			return nil, fmt.Errorf("oauth: generate signing key: %w", gerr)
 		}
-		return ed25519.PrivateKey(b), nil
-	case errors.Is(err, os.ErrNotExist):
-		_, priv, err := ed25519.GenerateKey(rand.Reader)
-		if err != nil {
-			return nil, fmt.Errorf("oauth: generate signing key: %w", err)
+		if _, werr := f.Write(priv); werr != nil {
+			f.Close()
+			return nil, fmt.Errorf("oauth: write signing key: %w", werr)
 		}
-		if err := os.WriteFile(path, priv, 0o600); err != nil {
-			return nil, fmt.Errorf("oauth: write signing key: %w", err)
+		if cerr := f.Close(); cerr != nil {
+			return nil, fmt.Errorf("oauth: write signing key: %w", cerr)
 		}
 		return priv, nil
+	case errors.Is(err, os.ErrExist):
+		return readKey(path) // someone else created it (or it predates us)
 	default:
+		return nil, fmt.Errorf("oauth: create signing key: %w", err)
+	}
+}
+
+// readKey loads a raw ed25519 private key from path. The public half is
+// re-derived from the seed rather than trusted verbatim: a right-length but
+// corrupted file otherwise yields a signer whose own tokens never verify (the
+// length check alone catches truncation, not in-place corruption).
+func readKey(path string) (ed25519.PrivateKey, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
 		return nil, fmt.Errorf("oauth: read signing key: %w", err)
 	}
+	if len(b) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("oauth: signing key %q is %d bytes, want a %d-byte ed25519 key", path, len(b), ed25519.PrivateKeySize)
+	}
+	return ed25519.NewKeyFromSeed(b[:ed25519.SeedSize]), nil
 }

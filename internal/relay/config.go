@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -45,6 +46,9 @@ func LoadConfig(args []string) (Config, error) {
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
+	// Normalize the base URL so a trailing slash can't produce a doubled slash
+	// in the PRM/discovery URLs or the token audience.
+	c.BaseURL = strings.TrimRight(c.BaseURL, "/")
 	// Default the signing key beside the DB — one -db usually implies the whole
 	// data dir, so the common case needs no extra flag.
 	if c.SigningKeyPath == "" {

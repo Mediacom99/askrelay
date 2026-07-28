@@ -2,7 +2,7 @@ package oauth
 
 import (
 	"context"
-	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -26,16 +26,20 @@ func ProtectedResourceMetadataHandler(baseURL string) http.Handler {
 
 // NewBearerMiddleware guards a handler with access-token validation. On failure
 // it emits 401 + a WWW-Authenticate challenge pointing at the PRM (RFC 9728
-// discovery). The verifier maps our token errors to auth.ErrInvalidToken (so
-// go-sdk answers 401, not 500) and sets Expiration (which go-sdk re-checks).
-func NewBearerMiddleware(iss *Issuer, baseURL string) func(http.Handler) http.Handler {
+// discovery). The verifier returns a BARE auth.ErrInvalidToken — go-sdk echoes
+// the error string into the 401 body, so the failure reason must not travel to
+// the caller (T-17); it is logged server-side instead, as a reason code only,
+// never the token (T-18). Expiration is set because go-sdk re-checks it.
+func NewBearerMiddleware(iss *Issuer, baseURL string, log *slog.Logger) func(http.Handler) http.Handler {
 	verifier := func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		claims, err := iss.parse(token, time.Now().UTC())
 		if err != nil {
-			return nil, fmt.Errorf("%w: %v", auth.ErrInvalidToken, err)
+			log.Warn("bearer rejected", "reason", "invalid_token")
+			return nil, auth.ErrInvalidToken
 		}
 		if claims.Use != useAccess {
-			return nil, fmt.Errorf("%w: not an access token", auth.ErrInvalidToken)
+			log.Warn("bearer rejected", "reason", "wrong_use")
+			return nil, auth.ErrInvalidToken
 		}
 		return &auth.TokenInfo{
 			UserID:     claims.Subject,

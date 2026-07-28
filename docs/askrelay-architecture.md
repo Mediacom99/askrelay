@@ -173,8 +173,15 @@ company perimeter; the retention design is the mitigation.
   device keypair locally, registers the public key against the person, and
   receives the relay's URL + a device credential for the WebSocket.
 - A person may have several devices; any of them may approve. Revocation
-  (`askrelay device revoke`) is immediate — the relay refuses signatures and
-  tokens from revoked devices. Roster-only messaging: no roster entry, no mail.
+  (`askrelay device revoke`) takes effect immediately for everything that is
+  checked live: the relay refuses signatures from a revoked device, the device
+  WS credential is refused at `/ws` connect (live `ActiveDeviceByID` check,
+  WP-08), and no new OAuth token can be minted or refreshed for it (the AS
+  re-checks the device on every issuance, WP-06). The one bounded exception is
+  a stateless access token already issued to the person: it stays valid until
+  it expires (≤1h TTL, T-06), since it carries no per-request device check by
+  design. Operators needing a tighter bound can lower the access-token TTL.
+  Roster-only messaging: no roster entry, no mail.
 - OIDC / GitHub-org verification at enrollment is v1.5 (D-10).
 
 ### 4.4 OAuth 2.1 (for browser-side MCP clients)
@@ -330,7 +337,7 @@ architecture-level invariants:
 | Secrets/company data leaking in helpful replies | Outbound review gate (D-11) + client-side redaction with visible markers (D-12) |
 | Exfil via rendered content | Clients render URLs as text, never fetch; no image parts in v1 (§3, D-05) |
 | Relay compromise / nosy operator | Plaintext acknowledged honestly: self-host guidance, ephemeral retention (§4.2), grants/audit outlive bodies; E2EE explicitly revisited if IT requires (D-05) |
-| Impersonation | Per-device Ed25519 signatures verified at relay *and* recipient; roster-only; instant device revocation (§4.3) |
+| Impersonation | Per-device Ed25519 signatures verified at relay *and* recipient; roster-only; device revocation is immediate for signatures, the WS credential, and new token issuance — an already-issued stateless access token lingers ≤1h until expiry (§4.3, T-06) |
 | Replay / cross-tenant confusion (Asana-class — security.md) | Id tombstones + `sent_at` freshness (§3); identity-keyed state, never session-keyed (§4.4); single-team relay, no federation (D-06) — on the multi-tenant hosted instance this last assumption is replaced by the per-team isolation hardening of WP-16 (D-08) |
 | Vendor-ToS violation as a design flaw | Relay never touches vendor credentials; all AI work happens in the participant's own client under their own login; unattended = API-key-only, v1.1 (vendor-tos.md, D-03) |
 | Abuse of the future hosted instance | Deferred with D-08 (launch, not v1); hardening WP gates it |

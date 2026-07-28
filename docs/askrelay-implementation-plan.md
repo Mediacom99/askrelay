@@ -412,7 +412,22 @@ beside the DB, generated on first `serve`.)*
 `github.com/golang-jwt/jwt/v5 v5.3.1`.
 
 **Test plan:** RFC 8707 audience mismatch rejected; expired/not-yet-valid;
-revoked device's tokens die; PRM document matches spec examples.
+PRM document matches spec examples. *("Revoked device's tokens die" is split
+by the stateless-token decision: device credentials die immediately via the
+live `ActiveDeviceByID` check at `/ws` connect (WP-08); an already-issued
+access token is bounded by its ≤1h TTL and dies at expiry, since access
+tokens carry no device claim — WP-06 must re-check the device at issuance to
+stop new tokens. WP-05 itself proves only the primitive: `ActiveDeviceByID`
+refuses a revoked device.)*
+
+**Security notes (WP-05 quality pass):**
+- Bearer-auth failures return a **bare** `auth.ErrInvalidToken` (go-sdk echoes
+  the error string into the 401 body — the reason must not travel to the
+  caller, T-17); the reason is logged server-side as a code only (T-18).
+- The signing key is loaded by re-deriving the public half from the seed
+  (`ed25519.NewKeyFromSeed`) and created atomically (`O_CREATE|O_EXCL`) so a
+  corrupted-but-right-length file or a concurrent first-start can't produce a
+  silently-broken or split-brained signer.
 
 ### WP-06 — relay OAuth: embedded AS + client registration
 
@@ -425,6 +440,17 @@ CIMD acceptance (ChatGPT path); JWKS; refresh tokens. **Owns `0002_oauth.sql`**
 (moved from WP-05, 2026-07-26): the clients, PKCE authorization-codes, and
 refresh-token tables — all AS state, shaped by this WP's design (WP-05's
 resource server is stateless and ships no oauth tables).
+
+**Security obligations (from WP-05 quality pass):**
+- **Re-check the device on every mint and refresh** — call
+  `store.ActiveDeviceByID` (or an equivalent person-active check) at the token
+  endpoint, so a revoked device cannot mint fresh access tokens. Without this,
+  device revocation only bites new *device credentials*, not the access-token
+  path (arch §4.3, T-06).
+- **Never mint multi-audience access tokens.** `Issuer.Verify` accepts a token
+  whose `aud` array contains the relay's audience among others (RFC 8707
+  "one match is enough"); keep `aud` single-valued so a token minted here is
+  not replayable at another resource sharing the signing key.
 
 **Test plan:** full code+PKCE happy path scripted; PKCE downgrade attacks
 rejected; DCR'd and CIMD clients both reach a working token; state/nonce

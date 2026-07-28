@@ -35,7 +35,7 @@ type Server struct {
 // be non-nil.
 func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger) *Server {
 	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux()}
-	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL)
+	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL, log)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
 	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))

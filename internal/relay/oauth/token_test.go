@@ -1,6 +1,8 @@
 package oauth
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"os"
 	"path/filepath"
@@ -72,6 +74,52 @@ func TestVerifyRejects(t *testing.T) {
 // TestVerifyRejectsAlgConfusion forges a token with the alg swapped to HS256
 // keyed on the relay's PUBLIC key — the classic JWT confusion attack — and
 // confirms WithValidMethods refuses it.
+// TestVerifyRejectsNotYetValid pins that the verifier honors nbf (the WP-05
+// "not-yet-valid" test-plan item). Mint never sets NotBefore, so the token is
+// crafted directly via the issuer's own signer.
+func TestVerifyRejectsNotYetValid(t *testing.T) {
+	iss := testIssuer(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	tok, err := iss.sign(AccessClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "p",
+			Issuer:    testAud,
+			Audience:  jwt.ClaimStrings{testAud},
+			NotBefore: jwt.NewNumericDate(now.Add(time.Hour)), // valid only later
+			ExpiresAt: jwt.NewNumericDate(now.Add(2 * time.Hour)),
+		},
+		Use: useAccess,
+	})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, _, err := iss.Verify(tok, now); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("not-yet-valid token: err = %v, want ErrInvalidToken", err)
+	}
+}
+
+// TestVerifyRejectsAudienceMismatchAlone isolates the audience check from the
+// signature check: same key and issuer, only the claimed audience differs.
+func TestVerifyRejectsAudienceMismatchAlone(t *testing.T) {
+	iss := testIssuer(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	tok, err := iss.sign(AccessClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   "p",
+			Issuer:    testAud,
+			Audience:  jwt.ClaimStrings{"https://other.example.com"}, // only this differs
+			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
+		},
+		Use: useAccess,
+	})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	if _, _, err := iss.Verify(tok, now); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("wrong-audience token (same key): err = %v, want ErrInvalidToken", err)
+	}
+}
+
 func TestVerifyRejectsAlgConfusion(t *testing.T) {
 	iss := testIssuer(t)
 	now := time.Unix(1_700_000_000, 0).UTC()
@@ -118,6 +166,36 @@ func TestLoadOrCreateKeyPersistsAndValidates(t *testing.T) {
 	}
 	if _, err := loadOrCreateKey(bad); err == nil {
 		t.Error("loadOrCreateKey accepted a wrong-length key file")
+	}
+}
+
+// TestReadKeyReDerivesPublicHalf: a key file with a valid seed but a corrupted
+// (zeroed) public half must still produce a self-consistent signer — the pub
+// is re-derived from the seed, not trusted verbatim (Finding D).
+func TestReadKeyReDerivesPublicHalf(t *testing.T) {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	corrupt := make([]byte, ed25519.PrivateKeySize)
+	copy(corrupt, priv[:ed25519.SeedSize]) // keep the seed, leave the pub half zero
+	path := filepath.Join(t.TempDir(), "k")
+	if err := os.WriteFile(path, corrupt, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	key, err := readKey(path)
+	if err != nil {
+		t.Fatalf("readKey: %v", err)
+	}
+	iss := &Issuer{priv: key, pub: key.Public().(ed25519.PublicKey), audience: testAud, ttl: time.Hour}
+	now := time.Now().UTC()
+	tok, err := iss.Mint("p", "c", now)
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if _, _, err := iss.Verify(tok, now); err != nil {
+		t.Errorf("signer from re-derived key cannot verify its own token: %v", err)
 	}
 }
 

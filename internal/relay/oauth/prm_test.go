@@ -2,6 +2,8 @@ package oauth
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -43,7 +45,7 @@ func probe(w http.ResponseWriter, r *http.Request) {
 
 func TestBearerMiddleware(t *testing.T) {
 	iss := testIssuer(t)
-	mw := NewBearerMiddleware(iss, testAud)
+	mw := NewBearerMiddleware(iss, testAud, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	handler := mw(http.HandlerFunc(probe))
 
 	serve := func(authHeader string) *httptest.ResponseRecorder {
@@ -74,9 +76,17 @@ func TestBearerMiddleware(t *testing.T) {
 		t.Errorf("challenge = %q, want a resource_metadata param", ch)
 	}
 
-	// Garbage token → 401 (not 500 — our error maps to auth.ErrInvalidToken).
-	if rec := serve("Bearer not.a.jwt"); rec.Code != http.StatusUnauthorized {
+	// Garbage token → 401 (not 500 — our error maps to auth.ErrInvalidToken),
+	// and the body must NOT leak the internal validation reason (T-17): only
+	// the generic sentinel message reaches the caller.
+	rec = serve("Bearer not.a.jwt")
+	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("garbage token: status = %d, want 401", rec.Code)
+	}
+	for _, leak := range []string{"malformed", "JSON", "decode", "oauth:", "signature", "expired"} {
+		if strings.Contains(rec.Body.String(), leak) {
+			t.Errorf("401 body leaks internal detail %q: %s", leak, rec.Body.String())
+		}
 	}
 
 	// A DEVICE credential presented as a bearer token → 401 (use separation).
