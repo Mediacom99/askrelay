@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Mediacom99/askrelay/internal/relay/mcp"
 	"github.com/Mediacom99/askrelay/internal/relay/oauth"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
@@ -39,6 +40,7 @@ func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
 	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))
+	s.mux.Handle("POST /mcp", s.bearer(mcp.NewHandler(st, log, Version).HTTPHandler()))
 	return s
 }
 
