@@ -17,7 +17,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-02 | `internal/gate` — approval/grant state machine | DONE | — | — |
 | WP-03 | `internal/relay/store` — SQLite persistence | DONE | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | DONE | WP-03 | T-11 T-14 T-15 |
-| WP-05 | relay OAuth: resource server + tokens | IN_PROGRESS | WP-04 | T-06 |
+| WP-05 | relay OAuth: resource server + tokens | DONE | WP-04 | T-06 |
 | WP-06 | relay OAuth: embedded AS + client registration | TODO | WP-05 | T-06 |
 | WP-07 | relay MCP surface (tools + spotlighting) | TODO | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
 | WP-08 | WS hub, delivery, retention sweeper | TODO | WP-03 WP-04 | T-04 T-09 |
@@ -394,7 +394,7 @@ only the binary and a reverse proxy.
 
 ### WP-05 — relay OAuth: resource server
 
-**Status:** TODO · **Depends on:** WP-04 · **Gated by:** T-06 ·
+**Status:** DONE (2026-07-29, PR #5) · **Depends on:** WP-04 · **Gated by:** T-06 ·
 **Spec:** arch §4.4.
 
 **Goal:** RFC 9728 PRM endpoint (go-sdk `auth` handler), bearer validation
@@ -724,6 +724,20 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
   verified end-to-end against the binary (real HTTP enroll → device enrolled;
   token reuse → 403). Changed: WP-05 (inherits the deferred WS credential +
   `0002_oauth.sql`).
+- 2026-07-29 — **WP-05 DONE** (PR #5; OAuth resource server + tokens). Deps:
+  `golang-jwt/jwt/v5 v5.3.1` + `modelcontextprotocol/go-sdk v1.6.1` (§3 pins).
+  Stateless EdDSA JWTs (access 1h + long-lived device credential), `use`-claim
+  separation, RFC 9728 PRM + bearer middleware, `/enroll` now returns the
+  device credential. **Decisions:** tokens are stateless so `0002_oauth.sql`
+  moved WP-05 → WP-06; and (maintainer, Option 1) access-token revocation is
+  bounded by the ≤1h TTL, not immediate — arch §4.3/§8 reworded honestly. The
+  R-06 quality pass caught the T-17 blocker (bearer 401 body leaked the
+  validation reason — now bare `auth.ErrInvalidToken` + T-18 server-side log)
+  and a corrupted-signing-key footgun (now re-derive pub from seed + atomic
+  create); core confirmed forgery-proof under ~9M fuzz inputs. **Binding
+  obligations pushed to WP-06:** re-check `ActiveDeviceByID` on every token
+  mint/refresh, and never mint multi-audience tokens (both recorded in the
+  WP-06 entry). Changed: WP-06.
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
