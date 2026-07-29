@@ -17,6 +17,17 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if c.InviteTTL != 24*time.Hour || c.AckGrace != 72*time.Hour || c.HardTTL != 720*time.Hour {
 		t.Errorf("duration defaults wrong: %+v", c)
 	}
+	// Signing key defaults beside the db.
+	if c.SigningKeyPath != "signing.key" {
+		t.Errorf("signing-key default = %q, want signing.key", c.SigningKeyPath)
+	}
+	c2, err := LoadConfig([]string{"-base-url", "https://r.example.com", "-db", "/data/relay.db"})
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if c2.SigningKeyPath != "/data/signing.key" {
+		t.Errorf("signing-key beside db = %q, want /data/signing.key", c2.SigningKeyPath)
+	}
 }
 
 func TestLoadConfigFlagBeatsEnv(t *testing.T) {

@@ -235,3 +235,23 @@ func (s *Store) ActiveDeviceByPubkey(pubkey ed25519.PublicKey) (Device, error) {
 	d.CreatedAt = time.Unix(created, 0).UTC()
 	return d, nil
 }
+
+// ActiveDeviceByID resolves a device id to its ACTIVE device — the live
+// revocation check a device credential routes through (WP-05/08). A revoked or
+// unknown id is the same ErrNotFound: refusal, with no revocation oracle.
+func (s *Store) ActiveDeviceByID(deviceID string) (Device, error) {
+	d := Device{ID: deviceID}
+	var created int64
+	err := s.db.QueryRow(
+		`SELECT person_id, pubkey, label, created_at FROM devices
+		 WHERE id = ? AND revoked_at IS NULL`, deviceID).
+		Scan(&d.PersonID, &d.PubKey, &d.Label, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrNotFound
+	}
+	if err != nil {
+		return Device{}, fmt.Errorf("store: device by id: %w", err)
+	}
+	d.CreatedAt = time.Unix(created, 0).UTC()
+	return d, nil
+}

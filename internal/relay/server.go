@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Mediacom99/askrelay/internal/relay/oauth"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
 
@@ -20,18 +21,24 @@ var Version = "dev"
 // OAuth (WP-05/06), and the WebSocket hub (WP-08) mount onto this skeleton
 // later.
 type Server struct {
-	cfg   Config
-	store *store.Store
-	log   *slog.Logger
-	mux   *http.ServeMux
+	cfg    Config
+	store  *store.Store
+	issuer *oauth.Issuer
+	log    *slog.Logger
+	mux    *http.ServeMux
+	// bearer guards protected routes with access-token validation. WP-07 wraps
+	// /mcp with it; nothing uses it yet in the skeleton.
+	bearer func(http.Handler) http.Handler
 }
 
-// NewServer wires the routes; it does not listen. store and log must be
-// non-nil.
-func NewServer(cfg Config, st *store.Store, log *slog.Logger) *Server {
-	s := &Server{cfg: cfg, store: st, log: log, mux: http.NewServeMux()}
+// NewServer wires the routes; it does not listen. store, issuer, and log must
+// be non-nil.
+func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger) *Server {
+	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux()}
+	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL, log)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
+	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))
 	return s
 }
 

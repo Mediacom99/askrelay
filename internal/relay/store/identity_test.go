@@ -152,6 +152,35 @@ func TestRevokeDevice(t *testing.T) {
 	}
 }
 
+func TestActiveDeviceByID(t *testing.T) {
+	s := newStore(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	token, _ := s.CreateInvite("r@example.com", time.Hour, now)
+	_, d, err := s.Enroll(token, newPubkey(t), "laptop", now)
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+
+	got, err := s.ActiveDeviceByID(d.ID)
+	if err != nil {
+		t.Fatalf("ActiveDeviceByID: %v", err)
+	}
+	if got.ID != d.ID || got.PersonID != d.PersonID {
+		t.Errorf("device = %+v, want id %q person %q", got, d.ID, d.PersonID)
+	}
+	// Unknown id → ErrNotFound.
+	if _, err := s.ActiveDeviceByID("no-such-device"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown id: err = %v, want ErrNotFound", err)
+	}
+	// Revoked device → ErrNotFound (the live kill switch, no oracle).
+	if err := s.RevokeDevice(d.ID, now); err != nil {
+		t.Fatalf("RevokeDevice: %v", err)
+	}
+	if _, err := s.ActiveDeviceByID(d.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("revoked device: err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestEnrollSecondDeviceReusesPerson(t *testing.T) {
 	s := newStore(t)
 	now := time.Unix(1_700_000_000, 0).UTC()
