@@ -115,8 +115,12 @@ func TestMCPSurfaceMounted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(res.Tools) != 0 {
-		t.Errorf("tools = %d, want 0 (subtask-1 shell)", len(res.Tools))
+	names := map[string]bool{}
+	for _, tool := range res.Tools {
+		names[tool.Name] = true
+	}
+	if !names["check_inbox"] {
+		t.Errorf("tool list missing check_inbox: %v", names)
 	}
 
 	// No token → the bearer middleware refuses the initialize POST → connect fails.

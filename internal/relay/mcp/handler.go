@@ -48,9 +48,10 @@ func (h *Handler) HTTPHandler() http.Handler {
 }
 
 // serverFor builds a per-request server with every tool bound to person.
-// Subtasks 2–5 register the tools; subtask 1 wires the shell.
+// Later subtasks register the remaining tools.
 func (h *Handler) serverFor(person, clientType string) *sdkmcp.Server {
-	_ = person
-	_ = clientType
-	return sdkmcp.NewServer(&sdkmcp.Implementation{Name: "askrelay", Version: h.version}, nil)
+	_ = clientType // used by wait_for_activity (profile caps)
+	s := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "askrelay", Version: h.version}, nil)
+	h.addCheckInbox(s, person)
+	return s
 }
