@@ -53,6 +53,24 @@ func (s *Store) InboundAwaiting(personID string) ([]InboundItem, error) {
 	return items, nil
 }
 
+// HasActivity reports whether the person has anything awaiting them — an
+// inbound message to act on or a pending_review draft. A cheap EXISTS for the
+// wait_for_activity long-poll loop.
+func (s *Store) HasActivity(personID string) (bool, error) {
+	var yes bool
+	err := s.db.QueryRow(
+		`SELECT EXISTS(
+		     SELECT 1 FROM messages m JOIN threads t ON t.id = m.thread_id
+		     WHERE t.state='input-required' AND (t.initiator_id=? OR t.recipient_id=?) AND m.sender_id!=?)
+		  OR EXISTS(
+		     SELECT 1 FROM drafts WHERE author_id=? AND state='pending_review')`,
+		personID, personID, personID, personID).Scan(&yes)
+	if err != nil {
+		return false, fmt.Errorf("store: has activity: %w", err)
+	}
+	return yes, nil
+}
+
 // DraftItem is one of the person's own drafts awaiting their outbound review.
 type DraftItem struct {
 	DraftID  string

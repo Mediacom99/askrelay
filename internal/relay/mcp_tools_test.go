@@ -157,6 +157,58 @@ func TestCheckInboxTool(t *testing.T) {
 	}
 }
 
+func TestWaitForActivityTool(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.logRequests(s.mux))
+	defer ts.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	fresh := store.Freshness{MaxAge: 24 * time.Hour, MaxSkew: 5 * time.Minute}
+
+	a := enrollForTest(t, s, "a@example.com", now)
+	b := enrollForTest(t, s, "b@example.com", now)
+	bsess := mcpSession(ctx, t, ts.URL, mint(t, s, b))
+	defer bsess.Close()
+
+	wait := func(secs int) bool {
+		res, err := bsess.CallTool(ctx, &sdkmcp.CallToolParams{
+			Name: "wait_for_activity", Arguments: map[string]any{"timeout_seconds": secs}})
+		if err != nil {
+			t.Fatalf("CallTool: %v", err)
+		}
+		var out struct {
+			Activity bool `json:"activity"`
+		}
+		raw, _ := json.Marshal(res.StructuredContent)
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("decode: %v (%s)", err, raw)
+		}
+		return out.Activity
+	}
+
+	// Empty inbox: a 1s wait returns false, and actually waited ~1s.
+	start := time.Now()
+	if wait(1) {
+		t.Error("wait_for_activity reported activity on an empty inbox")
+	}
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Errorf("wait returned after %v; expected it to poll for ~1s", elapsed)
+	}
+
+	// Seed an inbound message → a longer wait returns true promptly.
+	thread := uuid.Must(uuid.NewV7()).String()
+	if err := s.store.IngestMessage(mkTestEnvelope(thread, a, b, "hi", now), a, fresh, now); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	start = time.Now()
+	if !wait(30) {
+		t.Error("wait_for_activity missed the seeded message")
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Errorf("wait took %v to notice existing activity; should be prompt", elapsed)
+	}
+}
+
 func mint(t *testing.T, s *Server, person string) string {
 	t.Helper()
 	tok, err := s.issuer.Mint(person, "claude.ai", time.Now().UTC())
