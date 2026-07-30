@@ -35,18 +35,85 @@ func (s *Store) transitionInbound(threadID string, v gate.Verdict, now time.Time
 		if err != nil {
 			return fmt.Errorf("store: load thread: %w", err)
 		}
-		// The gate is the single authority on legality; wrap so callers can
-		// still errors.Is(err, gate.ErrIllegalTransition).
-		next, err := gate.ApplyInbound(a2a.ThreadState(cur), v)
-		if err != nil {
-			return fmt.Errorf("store: inbound verdict: %w", err)
-		}
-		if _, err := tx.Exec(`UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
-			string(next), now.Unix(), threadID); err != nil {
-			return fmt.Errorf("store: update thread: %w", err)
-		}
-		return nil
+		_, err = applyInboundTx(tx, threadID, a2a.ThreadState(cur), v, now)
+		return err
 	})
+}
+
+// applyInboundTx applies a verdict to threadID within tx: the gate decision
+// (the single authority on legality — wrapped so callers can still
+// errors.Is(err, gate.ErrIllegalTransition)) plus the write-back. Returns the
+// resulting thread state.
+func applyInboundTx(tx *sql.Tx, threadID string, cur a2a.ThreadState, v gate.Verdict, now time.Time) (a2a.ThreadState, error) {
+	next, err := gate.ApplyInbound(cur, v)
+	if err != nil {
+		return "", fmt.Errorf("store: inbound verdict: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE threads SET state = ?, updated_at = ? WHERE id = ?`,
+		string(next), now.Unix(), threadID); err != nil {
+		return "", fmt.Errorf("store: update thread: %w", err)
+	}
+	return next, nil
+}
+
+// ApproveInboundMessage / DeclineInboundMessage apply the caller's inbound
+// verdict to the thread of messageID. They confirm the message is awaiting
+// THIS person's verdict — they participate in its thread and did not send it —
+// so no one can act on a message that isn't theirs (D-03; the single-handler
+// discipline, WP-02). ErrNotFound if the message is absent or not the caller's
+// to act on (no oracle). Returns the resulting thread state.
+func (s *Store) ApproveInboundMessage(personID, messageID string, now time.Time) (a2a.ThreadState, error) {
+	return s.inboundMessageVerdict(personID, messageID, gate.Approve, now)
+}
+
+func (s *Store) DeclineInboundMessage(personID, messageID string, now time.Time) (a2a.ThreadState, error) {
+	return s.inboundMessageVerdict(personID, messageID, gate.Reject, now)
+}
+
+func (s *Store) inboundMessageVerdict(personID, messageID string, v gate.Verdict, now time.Time) (a2a.ThreadState, error) {
+	var next a2a.ThreadState
+	err := s.writeTx(func(tx *sql.Tx) error {
+		var threadID, sender, initiator, recipient, state string
+		err := tx.QueryRow(
+			`SELECT m.thread_id, m.sender_id, t.initiator_id, t.recipient_id, t.state
+			 FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.id = ?`, messageID).
+			Scan(&threadID, &sender, &initiator, &recipient, &state)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("store: load message: %w", err)
+		}
+		if (personID != initiator && personID != recipient) || personID == sender {
+			return ErrNotFound // not the caller's to act on — no oracle
+		}
+		var terr error
+		next, terr = applyInboundTx(tx, threadID, a2a.ThreadState(state), v, now)
+		return terr
+	})
+	if err != nil {
+		return "", err
+	}
+	return next, nil
+}
+
+// requireParticipant confirms personID is one of threadID's two parties.
+// "Thread absent" and "not a participant" both collapse to ErrNotParticipant
+// (no oracle) — a caller cannot probe which threads exist.
+func requireParticipant(tx *sql.Tx, threadID, personID string) error {
+	var initiator, recipient string
+	err := tx.QueryRow(`SELECT initiator_id, recipient_id FROM threads WHERE id = ?`, threadID).
+		Scan(&initiator, &recipient)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotParticipant
+	}
+	if err != nil {
+		return fmt.Errorf("store: participant check: %w", err)
+	}
+	if personID != initiator && personID != recipient {
+		return ErrNotParticipant
+	}
+	return nil
 }
 
 // SetThreadGrant issues a standing grant (idempotent: an existing active grant
@@ -57,6 +124,9 @@ func (s *Store) SetThreadGrant(threadID, personID string, dir gate.Direction, no
 		return fmt.Errorf("store: set grant: %w", gate.ErrWrongDirection)
 	}
 	return s.writeTx(func(tx *sql.Tx) error {
+		if err := requireParticipant(tx, threadID, personID); err != nil {
+			return err
+		}
 		var one int
 		err := tx.QueryRow(
 			`SELECT 1 FROM grants WHERE thread_id=? AND person_id=? AND direction=? AND revoked_at IS NULL`,
@@ -80,6 +150,9 @@ func (s *Store) SetThreadGrant(threadID, personID string, dir gate.Direction, no
 // a delete — the row stays as audit history). ErrNotFound if none is active.
 func (s *Store) RevokeThreadGrant(threadID, personID string, dir gate.Direction, now time.Time) error {
 	return s.writeTx(func(tx *sql.Tx) error {
+		if err := requireParticipant(tx, threadID, personID); err != nil {
+			return err
+		}
 		res, err := tx.Exec(
 			`UPDATE grants SET revoked_at=? WHERE thread_id=? AND person_id=? AND direction=? AND revoked_at IS NULL`,
 			now.Unix(), threadID, personID, string(dir))

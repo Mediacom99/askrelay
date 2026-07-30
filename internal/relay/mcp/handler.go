@@ -55,5 +55,7 @@ func (h *Handler) serverFor(person, clientType string) *sdkmcp.Server {
 	h.addCheckInbox(s, person)
 	h.addGetThread(s, person)
 	h.addWaitForActivity(s, person, clientType)
+	h.addInboundVerdicts(s, person)
+	h.addSetThreadGrant(s, person)
 	return s
 }

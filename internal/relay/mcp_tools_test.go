@@ -209,6 +209,122 @@ func TestWaitForActivityTool(t *testing.T) {
 	}
 }
 
+func TestInboundVerdictTools(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.logRequests(s.mux))
+	defer ts.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	fresh := store.Freshness{MaxAge: 24 * time.Hour, MaxSkew: 5 * time.Minute}
+
+	a := enrollForTest(t, s, "a@example.com", now)
+	b := enrollForTest(t, s, "b@example.com", now)
+	thread := uuid.Must(uuid.NewV7()).String()
+	msg := mkTestEnvelope(thread, a, b, "the question", now)
+	if err := s.store.IngestMessage(msg, a, fresh, now); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	ok := func(res *sdkmcp.CallToolResult, err error) bool { return err == nil && res != nil && !res.IsError }
+	approve := func(sess *sdkmcp.ClientSession, id string) (*sdkmcp.CallToolResult, error) {
+		return sess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "approve_message", Arguments: map[string]any{"id": id}})
+	}
+
+	asess := mcpSession(ctx, t, ts.URL, mint(t, s, a))
+	defer asess.Close()
+	bsess := mcpSession(ctx, t, ts.URL, mint(t, s, b))
+	defer bsess.Close()
+	csess := mcpSession(ctx, t, ts.URL, mint(t, s, enrollForTest(t, s, "c@example.com", now)))
+	defer csess.Close()
+
+	// A (the sender) cannot approve their own message; C (non-participant) cannot either.
+	if res, err := approve(asess, msg.ID); ok(res, err) {
+		t.Error("sender approved their own message")
+	}
+	if res, err := approve(csess, msg.ID); ok(res, err) {
+		t.Error("non-participant approved the message")
+	}
+	// B (the recipient) approves → thread working.
+	res, err := approve(bsess, msg.ID)
+	if !ok(res, err) {
+		t.Fatalf("recipient approve failed: err=%v isErr=%v", err, res != nil && res.IsError)
+	}
+	var out struct {
+		ThreadState string `json:"thread_state"`
+	}
+	raw, _ := json.Marshal(res.StructuredContent)
+	_ = json.Unmarshal(raw, &out)
+	if out.ThreadState != "working" {
+		t.Errorf("thread_state = %q, want working", out.ThreadState)
+	}
+	// Re-approving is now an illegal transition → refused.
+	if res, err := approve(bsess, msg.ID); ok(res, err) {
+		t.Error("re-approving an already-approved message succeeded")
+	}
+
+	// Decline on a fresh thread → rejected.
+	t2 := uuid.Must(uuid.NewV7()).String()
+	m2 := mkTestEnvelope(t2, a, b, "another", now)
+	if err := s.store.IngestMessage(m2, a, fresh, now); err != nil {
+		t.Fatalf("ingest 2: %v", err)
+	}
+	dres, derr := bsess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "decline_message", Arguments: map[string]any{"id": m2.ID}})
+	if !ok(dres, derr) {
+		t.Fatalf("decline failed: %v", derr)
+	}
+	raw, _ = json.Marshal(dres.StructuredContent)
+	_ = json.Unmarshal(raw, &out)
+	if out.ThreadState != "rejected" {
+		t.Errorf("declined thread_state = %q, want rejected", out.ThreadState)
+	}
+}
+
+func TestSetThreadGrantTool(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.logRequests(s.mux))
+	defer ts.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	fresh := store.Freshness{MaxAge: 24 * time.Hour, MaxSkew: 5 * time.Minute}
+
+	a := enrollForTest(t, s, "a@example.com", now)
+	b := enrollForTest(t, s, "b@example.com", now)
+	thread := uuid.Must(uuid.NewV7()).String()
+	if err := s.store.IngestMessage(mkTestEnvelope(thread, a, b, "q", now), a, fresh, now); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	ok := func(res *sdkmcp.CallToolResult, err error) bool { return err == nil && res != nil && !res.IsError }
+	grant := func(sess *sdkmcp.ClientSession, dir string, enabled bool) (*sdkmcp.CallToolResult, error) {
+		return sess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "set_thread_grant",
+			Arguments: map[string]any{"thread_id": thread, "direction": dir, "enabled": enabled}})
+	}
+
+	bsess := mcpSession(ctx, t, ts.URL, mint(t, s, b))
+	defer bsess.Close()
+	csess := mcpSession(ctx, t, ts.URL, mint(t, s, enrollForTest(t, s, "c@example.com", now)))
+	defer csess.Close()
+
+	// Non-participant refused.
+	if res, err := grant(csess, "inbound", true); ok(res, err) {
+		t.Error("non-participant set a grant")
+	}
+	// Participant enable, then disable, then disable again (idempotent).
+	if res, err := grant(bsess, "inbound", true); !ok(res, err) {
+		t.Fatalf("enable grant failed: %v", err)
+	}
+	if res, err := grant(bsess, "inbound", false); !ok(res, err) {
+		t.Fatalf("disable grant failed: %v", err)
+	}
+	if res, err := grant(bsess, "inbound", false); !ok(res, err) {
+		t.Error("disabling an inactive grant was not idempotent")
+	}
+	// Bad direction refused.
+	if res, err := grant(bsess, "sideways", true); ok(res, err) {
+		t.Error("a bad direction was accepted")
+	}
+}
+
 func mint(t *testing.T, s *Server, person string) string {
 	t.Helper()
 	tok, err := s.issuer.Mint(person, "claude.ai", time.Now().UTC())
