@@ -53,5 +53,6 @@ func (h *Handler) serverFor(person, clientType string) *sdkmcp.Server {
 	_ = clientType // used by wait_for_activity (profile caps)
 	s := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "askrelay", Version: h.version}, nil)
 	h.addCheckInbox(s, person)
+	h.addGetThread(s, person)
 	return s
 }

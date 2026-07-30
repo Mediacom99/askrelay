@@ -1,6 +1,11 @@
 package store
 
-import "fmt"
+import (
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+)
 
 // Person-level read queries backing the MCP surface (WP-07). The MCP client is
 // authenticated as a person (OAuth), not a device, so these aggregate across
@@ -76,4 +81,82 @@ func (s *Store) DraftsAwaitingReview(personID string) ([]DraftItem, error) {
 		return nil, fmt.Errorf("store: iterate drafts: %w", err)
 	}
 	return items, nil
+}
+
+// ThreadMessage is one message in a thread view.
+type ThreadMessage struct {
+	MessageID   string
+	SenderEmail string
+	Envelope    []byte
+	ReceivedAt  time.Time
+}
+
+// ThreadView is a thread the caller participates in: its messages and the
+// caller's own drafts.
+type ThreadView struct {
+	ThreadID string
+	State    string
+	Messages []ThreadMessage
+	Drafts   []DraftItem
+}
+
+// ThreadFor returns a thread the person participates in — its messages and the
+// person's OWN drafts (an unreleased draft is private to its author). A
+// non-participant or unknown id is ErrNotFound (no oracle): the two are
+// indistinguishable to the caller.
+func (s *Store) ThreadFor(personID, threadID string) (ThreadView, error) {
+	var v ThreadView
+	var initiator, recipient string
+	err := s.db.QueryRow(`SELECT state, initiator_id, recipient_id FROM threads WHERE id = ?`, threadID).
+		Scan(&v.State, &initiator, &recipient)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ThreadView{}, ErrNotFound
+	}
+	if err != nil {
+		return ThreadView{}, fmt.Errorf("store: load thread: %w", err)
+	}
+	if personID != initiator && personID != recipient {
+		return ThreadView{}, ErrNotFound
+	}
+	v.ThreadID = threadID
+
+	mrows, err := s.db.Query(
+		`SELECT m.id, p.email, m.envelope, m.received_at
+		 FROM messages m JOIN persons p ON p.id = m.sender_id
+		 WHERE m.thread_id = ? ORDER BY m.received_at`, threadID)
+	if err != nil {
+		return ThreadView{}, fmt.Errorf("store: thread messages: %w", err)
+	}
+	defer mrows.Close()
+	for mrows.Next() {
+		var m ThreadMessage
+		var received int64
+		if err := mrows.Scan(&m.MessageID, &m.SenderEmail, &m.Envelope, &received); err != nil {
+			return ThreadView{}, fmt.Errorf("store: scan thread message: %w", err)
+		}
+		m.ReceivedAt = time.Unix(received, 0).UTC()
+		v.Messages = append(v.Messages, m)
+	}
+	if err := mrows.Err(); err != nil {
+		return ThreadView{}, fmt.Errorf("store: iterate thread messages: %w", err)
+	}
+
+	drows, err := s.db.Query(
+		`SELECT id, thread_id, envelope FROM drafts
+		 WHERE thread_id = ? AND author_id = ? ORDER BY created_at`, threadID, personID)
+	if err != nil {
+		return ThreadView{}, fmt.Errorf("store: thread drafts: %w", err)
+	}
+	defer drows.Close()
+	for drows.Next() {
+		var d DraftItem
+		if err := drows.Scan(&d.DraftID, &d.ThreadID, &d.Envelope); err != nil {
+			return ThreadView{}, fmt.Errorf("store: scan thread draft: %w", err)
+		}
+		v.Drafts = append(v.Drafts, d)
+	}
+	if err := drows.Err(); err != nil {
+		return ThreadView{}, fmt.Errorf("store: iterate thread drafts: %w", err)
+	}
+	return v, nil
 }

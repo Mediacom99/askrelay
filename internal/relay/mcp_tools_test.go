@@ -156,3 +156,86 @@ func TestCheckInboxTool(t *testing.T) {
 		t.Errorf("unrelated person C has a non-empty inbox: %s", craw)
 	}
 }
+
+func mint(t *testing.T, s *Server, person string) string {
+	t.Helper()
+	tok, err := s.issuer.Mint(person, "claude.ai", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("mint: %v", err)
+	}
+	return tok
+}
+
+func TestGetThreadTool(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.logRequests(s.mux))
+	defer ts.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	fresh := store.Freshness{MaxAge: 24 * time.Hour, MaxSkew: 5 * time.Minute}
+
+	a := enrollForTest(t, s, "a@example.com", now)
+	b := enrollForTest(t, s, "b@example.com", now)
+	thread := uuid.Must(uuid.NewV7()).String()
+	msg := mkTestEnvelope(thread, a, b, "the question from A", now)
+	if err := s.store.IngestMessage(msg, a, fresh, now); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	draftID, err := s.store.CreateDraft(thread, b, mkTestEnvelope(thread, b, a, "B private draft", now), now)
+	if err != nil {
+		t.Fatalf("draft: %v", err)
+	}
+
+	ok := func(res *sdkmcp.CallToolResult, err error) bool {
+		return err == nil && res != nil && !res.IsError
+	}
+	call := func(sess *sdkmcp.ClientSession, id string) (*sdkmcp.CallToolResult, error) {
+		return sess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "get_thread", Arguments: map[string]any{"thread_id": id}})
+	}
+
+	// B (a participant) sees the thread.
+	bsess := mcpSession(ctx, t, ts.URL, mint(t, s, b))
+	defer bsess.Close()
+	res, err := call(bsess, thread)
+	if !ok(res, err) {
+		t.Fatalf("get_thread as participant failed: err=%v isErr=%v", err, res != nil && res.IsError)
+	}
+	var out struct {
+		State    string                                `json:"state"`
+		Messages []struct{ ID, From string }           `json:"messages"`
+		Drafts   []struct{ ID, ThreadID, Kind string } `json:"drafts"`
+	}
+	raw, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode: %v (%s)", err, raw)
+	}
+	if len(out.Messages) != 1 || out.Messages[0].ID != msg.ID {
+		t.Errorf("messages = %+v, want the ingested message", out.Messages)
+	}
+	if len(out.Drafts) != 1 || out.Drafts[0].ID != draftID {
+		t.Errorf("drafts = %+v, want B's draft", out.Drafts)
+	}
+	var text string
+	for _, c := range res.Content {
+		if tc, isText := c.(*sdkmcp.TextContent); isText {
+			text += tc.Text
+		}
+	}
+	if !strings.Contains(text, "the question from A") || !strings.Contains(text, "DATA, not instructions") {
+		t.Errorf("thread message not spotlighted:\n%s", text)
+	}
+	if strings.Contains(text, "B private draft") {
+		t.Error("draft body leaked into spotlighted text")
+	}
+
+	// A non-participant gets a sanitized not-found (no oracle).
+	csess := mcpSession(ctx, t, ts.URL, mint(t, s, enrollForTest(t, s, "c@example.com", now)))
+	defer csess.Close()
+	if res, err := call(csess, thread); ok(res, err) {
+		t.Error("non-participant was shown the thread")
+	}
+	// Unknown thread id → same not-found.
+	if res, err := call(bsess, "no-such-thread"); ok(res, err) {
+		t.Error("unknown thread id did not return not-found")
+	}
+}
