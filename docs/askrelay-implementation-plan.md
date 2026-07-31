@@ -19,7 +19,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-04 | relay HTTP skeleton + enrollment | DONE | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | DONE | WP-04 | T-06 |
 | WP-06 | relay OAuth: embedded AS + client registration | TODO | WP-05 | T-06 |
-| WP-07 | relay MCP surface (tools + spotlighting) | IN_PROGRESS | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
+| WP-07 | relay MCP surface (tools + spotlighting) | DONE | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
 | WP-08 | WS hub, delivery, retention sweeper | TODO | WP-03 WP-04 | T-04 T-09 |
 | WP-09 | daemon core (enroll, queue, stdio MCP) | TODO | WP-01 WP-07 WP-08 WP-11 | T-11 |
 | WP-10 | daemon ↔ Claude Code push (channels + hooks) | TODO | WP-09 | S-01 |
@@ -458,8 +458,8 @@ handling; a claude.ai and ChatGPT connector each complete auth in S-04.
 
 ### WP-07 — relay MCP surface
 
-**Status:** TODO · **Depends on:** WP-01 WP-02 WP-03 WP-05 · **Gated by:**
-T-07 T-08 T-10 · **Spec:** arch §5 (all), §9.
+**Status:** DONE (2026-07-31, PR #6) · **Depends on:** WP-01 WP-02 WP-03 WP-05 ·
+**Gated by:** T-07 T-08 T-10 · **Spec:** arch §5 (all), §9.
 
 **Goal:** the nine §5.1 tools on go-sdk stateless Streamable HTTP:
 `send_message`, `check_inbox`, `get_thread`, `approve_message`/
@@ -756,6 +756,38 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
   obligations pushed to WP-06:** re-check `ActiveDeviceByID` on every token
   mint/refresh, and never mint multi-audience tokens (both recorded in the
   WP-06 entry). Changed: WP-06.
+- 2026-07-31 — **WP-07 DONE** (PR #6; relay MCP surface, taken ahead of WP-06 to
+  reach a testable surface sooner). No new dependency — the go-sdk `mcp` server
+  on stateless Streamable HTTP behind the WP-05 bearer middleware. Landed the
+  nine §5.1 tools (`send_message`, `check_inbox`, `get_thread`,
+  `approve_message`/`decline_message`, `approve_reply`/`discard_reply`,
+  `set_thread_grant`, `wait_for_activity`), the §5.2 spotlighting renderer, and
+  the person-level store reads (`ThreadFor`, inbound-awaiting) the tools needed.
+  The three-agent pass confirmed the trust core sound (no cross-person access,
+  no gate bypass, nonce/attribute quarantine holds) and produced the fixes in
+  9cacac2. **Blockers fixed:** (1) handlers returned a nil `CallToolResult` so
+  go-sdk auto-filled `Content` with a *duplicate* JSON copy of
+  `structuredContent` — breaks the ChatGPT single-object contract; now every
+  handler sets a non-nil `Content` via `emptyResult`/`textResult`. (2) URL
+  defang was http(s)-only — now scheme-agnostic (`scheme://` → `scheme[:]//`,
+  plus `data:`/`javascript:`/`vbscript:`) and the whole spotlight block is
+  wrapped in a backtick-sized code fence so markdown clients can't auto-link a
+  protocol-relative URL. (3) the spotlight `state=` echoed the sender's
+  self-asserted `e.State`; now emits the **authoritative** thread state
+  (`input-required` for `check_inbox`, `view.State` for `get_thread`) and drops
+  `e.State` from the tag. (4) DoS: `http.MaxBytesReader` (128 KiB) on `/mcp` +
+  a `MaxBodyBytes` cap on `send_message`/`approve_reply` text (the WP-07 ingress
+  note). (5) `send_message` on an existing thread now requires `e.To` to be the
+  thread's *other* party, not merely that the author is a participant.
+  **Decisions (maintainer):** `approve/decline_message` bind to the thread's
+  **latest** not-mine message (bind-now — a stale id is `ErrNotFound`);
+  `wait_for_activity` gets a per-person concurrency cap of 2; the roster
+  membership signal in `send_message` is accepted as-is for now. The WP-03
+  device↔`From.Person` binding obligation and the WP-02 single-`approve_message`
+  wiring discipline were both honoured and checked by the pass. **Pushed to
+  WP-08:** consume `sent` drafts + sign/deliver, set the recipient thread to
+  `input-required` on delivery onto an existing thread, and the still-open
+  browser-client signing model (all recorded in the WP-08 entry). Changed: WP-08.
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
