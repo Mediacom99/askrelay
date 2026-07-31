@@ -498,3 +498,49 @@ WP-01 was the last (and only) autonomous run.
 
 **Verdict:** APPROVED (maintainer, 2026-07-23) — process co-designed via three
 confirmed choices.
+
+## D-23 — Local-first framing + "the other party can be a session you own"
+
+**Decision (maintainer, 2026-07-31):** adopt **local-first** as the primary
+go-to-market framing, and recognise **self-talk** (one operator, multiple of
+their own model-sessions) as the first-user on-ramp. Neither is a pivot away
+from the cross-person thesis (D-01) — both fall out of the existing
+architecture unchanged.
+
+**Rationale / why this holds:**
+- *Local is not a separate mode.* The relay is one binary over HTTPS; localhost,
+  LAN, and VPS are the same code (D-06/D-07). "Push it for local use first" costs
+  zero engineering — it is a positioning choice, not a rebuild.
+- *Self-talk needs no protocol change.* The §5.1 tool surface (`send_message` /
+  `wait_for_activity` / `check_inbox`) already works when the party on the other
+  end is another identity the same operator owns (e.g. a Claude Code session
+  asking a second-opinion model, async, and pulling the answer back in). This
+  lets the maintainer be user #1 and exercise the whole loop **solo**, directly
+  de-risking the cold-start/retention risk (R-11, D-21) instead of removing the
+  one guaranteed counterparty.
+
+**Scope boundaries (what this decision does NOT endorse):**
+- *No driving consumer web sessions.* Open ChatGPT/KIMI/Claude browser tabs
+  cannot be puppeted (vendor ToS, D-10 constraint; brittle scraping). Such tools
+  participate only as MCP **clients that connect out to the relay**, never as
+  surfaces the relay reaches into. A "see all my open AI tabs and wire them
+  together" dashboard is therefore out of scope for that reason, not just
+  priority.
+- *Auto-approving your own sessions is the v1.1 auto-reply path* (API-key-only,
+  pending Anthropic ToS clarification — D-03/standing constraints), not a v1
+  bypass of the approval gate.
+- *A dashboard is endorsed only as an operator / approval-and-observability
+  console* (threads, pending approvals, grants, enrolled devices), built once
+  messages actually flow (after WP-08) — not as a drag-drop session-orchestration
+  canvas.
+
+**Sequencing consequence:** the local-first path is **WP-08 (delivery) →
+WP-09 (daemon)** on device credentials (WP-05, shipped). **WP-06 (embedded
+OAuth AS) is off this critical path** — it authenticates only the zero-install
+*browser*-connector flow. Deferring browser clients also lets WP-08 defer its
+open **browser-client-signing** sub-decision (same "keyless browser client"
+cluster as WP-06). WP-08 is thus scoped to device-credential delivery for now;
+WP-06 + browser signing are taken together when the browser-connector path is
+wanted.
+
+**Verdict:** APPROVED (maintainer, 2026-07-31).
