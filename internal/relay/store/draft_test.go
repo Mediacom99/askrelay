@@ -146,6 +146,52 @@ func TestReleaseReplyViaGrant(t *testing.T) {
 	}
 }
 
+func TestDeliverDraft(t *testing.T) {
+	s := newStore(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	// setupDraft: asker asked author; author drafted a reply back to asker on an
+	// already-existing thread (so this exercises the input-required flip).
+	thread, author, draft := setupDraft(t, s, now)
+
+	var initiator, recipient string
+	if err := s.db.QueryRow(`SELECT initiator_id, recipient_id FROM threads WHERE id=?`, thread).
+		Scan(&initiator, &recipient); err != nil {
+		t.Fatalf("read thread parties: %v", err)
+	}
+	asker := initiator
+	if asker == author {
+		asker = recipient
+	}
+
+	if _, err := s.ReleaseDraft(author, draft, nil, now); err != nil {
+		t.Fatalf("ReleaseDraft: %v", err)
+	}
+	deliverAt := now.Add(time.Minute)
+	if err := s.DeliverDraft(draft, deliverAt); err != nil {
+		t.Fatalf("DeliverDraft: %v", err)
+	}
+
+	// The reply is now the asker's inbound, on an input-required thread.
+	items, err := s.InboundAwaiting(asker)
+	if err != nil {
+		t.Fatalf("InboundAwaiting: %v", err)
+	}
+	if len(items) != 1 || items[0].ThreadID != thread || items[0].MessageID != draft {
+		t.Fatalf("InboundAwaiting = %+v, want one item for draft %q on thread %q", items, draft, thread)
+	}
+
+	// Idempotent: redelivery is a replay (dedup on the envelope id).
+	if err := s.DeliverDraft(draft, deliverAt); !errors.Is(err, ErrReplay) {
+		t.Errorf("redeliver: err = %v, want ErrReplay", err)
+	}
+
+	// An unreleased (still pending_review) draft is not deliverable.
+	_, _, pending := setupDraft(t, s, now)
+	if err := s.DeliverDraft(pending, now); !errors.Is(err, ErrNotFound) {
+		t.Errorf("deliver pending draft: err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCreateDraftBadID(t *testing.T) {
 	s := newStore(t)
 	now := time.Unix(1_700_000_000, 0).UTC()

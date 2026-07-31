@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Mediacom99/askrelay/internal/a2a"
 	"github.com/Mediacom99/askrelay/internal/envelope"
 	"github.com/Mediacom99/askrelay/internal/gate"
 )
@@ -108,6 +109,42 @@ func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now t
 		return nil, err
 	}
 	return rel, nil
+}
+
+// DeliverDraft delivers a released (gate.Sent) draft to its recipient on the
+// author's behalf — relay-attested: the envelope carries NO device signature.
+// The author was OAuth-authenticated when the draft was created and released,
+// and on a self-hosted relay the relay is the trust anchor (D-10), so the
+// recipient trusts that attestation rather than a per-device signature. It
+// ingests the draft's envelope as the recipient's inbound message and forces the
+// thread to input-required — ensureThread only sets that on thread creation, so
+// a reply onto an existing thread must be transitioned here (the WP-07 delivery
+// obligation). Idempotent: a second delivery is ErrReplay (dedup on the id).
+//
+// ponytail: relay-attested, no signature — correct while the relay is self-hosted
+// and trusted and daemon-signed delivery (WP-09) does not yet exist. Upgrade path:
+// prefer/require the signed path and gate this one once both coexist on a remote
+// multi-tenant relay.
+func (s *Store) DeliverDraft(draftID string, now time.Time) error {
+	return s.writeTx(func(tx *sql.Tx) error {
+		thread, author, cur, payload, err := loadDraft(tx, draftID)
+		if err != nil {
+			return err
+		}
+		if cur != gate.Sent {
+			return ErrNotFound // only a released draft is deliverable
+		}
+		payload.SentAt = now // "sent" = when released, not when drafted
+		if err := ingestTx(tx, payload, author, now); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(
+			`UPDATE threads SET state=?, updated_at=? WHERE id=?`,
+			string(a2a.StateInputRequired), now.Unix(), thread); err != nil {
+			return fmt.Errorf("store: deliver draft: set input-required: %w", err)
+		}
+		return nil
+	})
 }
 
 // DiscardDraft rejects the author's pending draft (→ discarded); mints no
