@@ -325,6 +325,101 @@ func TestSetThreadGrantTool(t *testing.T) {
 	}
 }
 
+func TestOutboundTools(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.logRequests(s.mux))
+	defer ts.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	a := enrollForTest(t, s, "a@example.com", now)
+	_ = enrollForTest(t, s, "b@example.com", now)
+	asess := mcpSession(ctx, t, ts.URL, mint(t, s, a))
+	defer asess.Close()
+	bsess := mcpSession(ctx, t, ts.URL, mint(t, s, enrollForTest(t, s, "b2@example.com", now)))
+	defer bsess.Close()
+
+	ok := func(res *sdkmcp.CallToolResult, err error) bool { return err == nil && res != nil && !res.IsError }
+
+	// send_message A→B (new ask) → pending_review draft on a fresh thread.
+	res, err := asess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "send_message",
+		Arguments: map[string]any{"to": "b@example.com", "text": "original question"}})
+	if !ok(res, err) {
+		t.Fatalf("send_message failed: err=%v isErr=%v", err, res != nil && res.IsError)
+	}
+	var sm struct {
+		DraftID  string `json:"draft_id"`
+		ThreadID string `json:"thread_id"`
+		State    string `json:"state"`
+	}
+	raw, _ := json.Marshal(res.StructuredContent)
+	_ = json.Unmarshal(raw, &sm)
+	if sm.State != "pending_review" || sm.DraftID == "" || sm.ThreadID == "" {
+		t.Fatalf("send_message output = %+v", sm)
+	}
+
+	// Unknown recipient is refused.
+	if res, err := asess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "send_message",
+		Arguments: map[string]any{"to": "nobody@example.com", "text": "x"}}); ok(res, err) {
+		t.Error("send_message to an off-roster email succeeded")
+	}
+
+	// Someone else cannot release A's draft.
+	if res, err := bsess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "approve_reply",
+		Arguments: map[string]any{"id": sm.DraftID}}); ok(res, err) {
+		t.Error("a non-author released the draft")
+	}
+
+	// A approves with an edit → sent, and the stored draft carries the edited text.
+	edited := "edited final answer"
+	res, err = asess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "approve_reply",
+		Arguments: map[string]any{"id": sm.DraftID, "edited_text": edited}})
+	if !ok(res, err) {
+		t.Fatalf("approve_reply failed: %v", err)
+	}
+	view, verr := s.store.ThreadFor(a, sm.ThreadID)
+	if verr != nil {
+		t.Fatalf("ThreadFor: %v", verr)
+	}
+	var checked bool
+	for _, d := range view.Drafts {
+		if d.DraftID == sm.DraftID {
+			e, derr := envelope.Decode(d.Envelope)
+			if derr != nil {
+				t.Fatalf("decode sent draft: %v", derr)
+			}
+			if len(e.Body.Parts) != 1 || e.Body.Parts[0].Text != edited {
+				t.Errorf("released draft body = %q, want the edited text %q", e.Body.Parts, edited)
+			}
+			checked = true
+		}
+	}
+	if !checked {
+		t.Error("released draft not found in the thread view")
+	}
+
+	// Discard flow: a fresh draft, discarded, then un-releasable.
+	res, _ = asess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "send_message",
+		Arguments: map[string]any{"to": "b@example.com", "text": "to discard"}})
+	var sm2 struct {
+		DraftID string `json:"draft_id"`
+	}
+	raw, _ = json.Marshal(res.StructuredContent)
+	_ = json.Unmarshal(raw, &sm2)
+	if dres, derr := asess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "discard_reply",
+		Arguments: map[string]any{"id": sm2.DraftID}}); !ok(dres, derr) {
+		t.Fatalf("discard_reply failed: %v", derr)
+	}
+	if res, err := asess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "approve_reply",
+		Arguments: map[string]any{"id": sm2.DraftID}}); ok(res, err) {
+		t.Error("released a discarded draft")
+	}
+	if res, err := asess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "approve_reply",
+		Arguments: map[string]any{"id": "no-such-draft"}}); ok(res, err) {
+		t.Error("released a non-existent draft")
+	}
+}
+
 func mint(t *testing.T, s *Server, person string) string {
 	t.Helper()
 	tok, err := s.issuer.Mint(person, "claude.ai", time.Now().UTC())

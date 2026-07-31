@@ -505,6 +505,24 @@ retention sweeper goroutine wired to T-09 knobs.
 
 **Dependency added:** `github.com/coder/websocket v1.8.15`.
 
+**Delivery obligations (surfaced by WP-07):**
+- **Consume `sent` drafts.** WP-07's `send_message`/`approve_reply` release a
+  draft to `sent` and mint a `*gate.Release`; delivery is what signs the
+  payload and turns it into the recipient's inbound `messages` row
+  (`IngestMessage`). Scan `sent`-but-undelivered drafts (or drain a release
+  queue) — nothing delivers until this exists.
+- **Set the recipient's thread to `input-required` on delivery.**
+  `IngestMessage` only sets `input-required` when it *creates* a thread; a
+  delivered ask/reply onto an already-existing thread must transition the
+  recipient's side to `input-required`, or `check_inbox`/`InboundAwaiting`
+  won't surface it (WP-07 subtask-4 deliberately left existing-thread state to
+  the delivery layer).
+- **Browser-client signing** (named at WP-07 kickoff, still open): a browser
+  MCP client (claude.ai/ChatGPT) has no local device key to sign its outbound
+  envelope. Decide the signing model here (e.g. a relay-held browser-device
+  key signed server-side vs. read/approve-only browser clients) — a
+  wire-format/security-posture call that **waits for APPROVED**.
+
 **Security notes (WP-02 quality pass):** delivery MUST match
 `gate.Release.Thread()` **and** `gate.Release.ID()` against the message it
 transmits — thread alone permits replaying an approved Release for a

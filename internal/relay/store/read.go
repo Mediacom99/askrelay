@@ -5,7 +5,53 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+// PersonByEmail resolves a roster person by email (D-10: roster-only — an
+// unknown email is ErrNotFound, no mail). PersonByID is its id counterpart.
+func (s *Store) PersonByEmail(email string) (Person, error) {
+	return s.personBy(`SELECT id, email, label, created_at FROM persons WHERE email = ?`, email)
+}
+
+func (s *Store) PersonByID(id string) (Person, error) {
+	return s.personBy(`SELECT id, email, label, created_at FROM persons WHERE id = ?`, id)
+}
+
+func (s *Store) personBy(query, arg string) (Person, error) {
+	var p Person
+	var created int64
+	err := s.db.QueryRow(query, arg).Scan(&p.ID, &p.Email, &p.Label, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Person{}, ErrNotFound
+	}
+	if err != nil {
+		return Person{}, fmt.Errorf("store: person lookup: %w", err)
+	}
+	p.CreatedAt = time.Unix(created, 0).UTC()
+	return p, nil
+}
+
+// StartThread creates a new outbound-initiated thread (an ask) at state
+// submitted and returns its id. The recipient's side is transitioned to
+// input-required by delivery (WP-08), not here.
+func (s *Store) StartThread(initiatorID, recipientID string, now time.Time) (string, error) {
+	id := uuid.Must(uuid.NewV7()).String()
+	err := s.writeTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(
+			`INSERT INTO threads (id, initiator_id, recipient_id, state, created_at, updated_at)
+			 VALUES (?, ?, ?, 'submitted', ?, ?)`,
+			id, initiatorID, recipientID, now.Unix(), now.Unix()); err != nil {
+			return fmt.Errorf("store: start thread: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return id, nil
+}
 
 // Person-level read queries backing the MCP surface (WP-07). The MCP client is
 // authenticated as a person (OAuth), not a device, so these aggregate across
