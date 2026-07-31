@@ -144,9 +144,9 @@ func TestSweepCascadeAndSurvivors(t *testing.T) {
 func TestSweepDrafts(t *testing.T) {
 	s := newStore(t)
 	t0 := time.Unix(1_700_000_000, 0).UTC()
-	_, _, draft := setupDraft(t, s, t0)
-	if _, err := s.ReleaseReply(draft, t0); err != nil {
-		t.Fatalf("ReleaseReply: %v", err)
+	_, author, draft := setupDraft(t, s, t0)
+	if _, err := s.ReleaseDraft(author, draft, nil, t0); err != nil {
+		t.Fatalf("ReleaseDraft: %v", err)
 	}
 	// A live pending_review draft alongside it must never be swept.
 	_, _, live := setupDraft(t, s, t0)

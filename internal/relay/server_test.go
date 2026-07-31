@@ -15,9 +15,25 @@ import (
 	"testing"
 	"time"
 
+	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/Mediacom99/askrelay/internal/relay/oauth"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
+
+// authRT injects a bearer token into every client request.
+type authRT struct {
+	base  http.RoundTripper
+	token string
+}
+
+func (a authRT) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	if a.token != "" {
+		r.Header.Set("Authorization", "Bearer "+a.token)
+	}
+	return a.base.RoundTrip(r)
+}
 
 func testServer(t *testing.T) *Server {
 	t.Helper()
@@ -66,6 +82,51 @@ func TestPRMRouteMounted(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"resource"`) {
 		t.Errorf("PRM body missing resource field: %s", rec.Body.String())
+	}
+}
+
+func TestMCPSurfaceMounted(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.logRequests(s.mux))
+	defer ts.Close()
+	ctx := context.Background()
+
+	connect := func(token string) (*sdkmcp.ClientSession, error) {
+		client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "test", Version: "0"}, nil)
+		return client.Connect(ctx, &sdkmcp.StreamableClientTransport{
+			Endpoint:             ts.URL + "/mcp",
+			HTTPClient:           &http.Client{Transport: authRT{base: http.DefaultTransport, token: token}},
+			DisableStandaloneSSE: true,
+			MaxRetries:           -1,
+		}, nil)
+	}
+
+	// A valid access token connects and lists an (empty) tool set.
+	token, err := s.issuer.Mint("person-1", "claude.ai", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	sess, err := connect(token)
+	if err != nil {
+		t.Fatalf("authenticated connect: %v", err)
+	}
+	defer sess.Close()
+	res, err := sess.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	names := map[string]bool{}
+	for _, tool := range res.Tools {
+		names[tool.Name] = true
+	}
+	if !names["check_inbox"] {
+		t.Errorf("tool list missing check_inbox: %v", names)
+	}
+
+	// No token → the bearer middleware refuses the initialize POST → connect fails.
+	if sess, err := connect(""); err == nil {
+		sess.Close()
+		t.Error("unauthenticated connect succeeded; bearer middleware should refuse it")
 	}
 }
 

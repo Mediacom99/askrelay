@@ -45,18 +45,18 @@ func draftState(t *testing.T, s *Store, draftID string) string {
 func TestCreateAndReleaseDraft(t *testing.T) {
 	s := newStore(t)
 	now := time.Unix(1_700_000_000, 0).UTC()
-	thread, _, draft := setupDraft(t, s, now)
+	thread, author, draft := setupDraft(t, s, now)
 
 	if st := draftState(t, s, draft); st != "pending_review" {
 		t.Fatalf("new draft state = %q, want pending_review", st)
 	}
 
-	rel, err := s.ReleaseReply(draft, now)
+	rel, err := s.ReleaseDraft(author, draft, nil, now)
 	if err != nil {
-		t.Fatalf("ReleaseReply: %v", err)
+		t.Fatalf("ReleaseDraft: %v", err)
 	}
 	if rel == nil {
-		t.Fatal("ReleaseReply returned nil capability")
+		t.Fatal("ReleaseDraft returned nil capability")
 	}
 	if rel.Thread() != thread || rel.ID() != draft {
 		t.Errorf("release identity = (thread %q, id %q), want (%q, %q)", rel.Thread(), rel.ID(), thread, draft)
@@ -72,19 +72,19 @@ func TestCreateAndReleaseDraft(t *testing.T) {
 func TestReleaseReplyIllegalAndUnknown(t *testing.T) {
 	s := newStore(t)
 	now := time.Unix(1_700_000_000, 0).UTC()
-	_, _, draft := setupDraft(t, s, now)
+	_, author, draft := setupDraft(t, s, now)
 
-	if _, err := s.ReleaseReply(draft, now); err != nil {
+	if _, err := s.ReleaseDraft(author, draft, nil, now); err != nil {
 		t.Fatalf("first release: %v", err)
 	}
 	// Releasing an already-sent draft is illegal; the gate sentinel survives.
-	if _, err := s.ReleaseReply(draft, now); !errors.Is(err, gate.ErrIllegalTransition) {
+	if _, err := s.ReleaseDraft(author, draft, nil, now); !errors.Is(err, gate.ErrIllegalTransition) {
 		t.Errorf("release from sent: err = %v, want wrapped gate.ErrIllegalTransition", err)
 	}
-	if _, err := s.ReleaseReply("no-such-draft", now); !errors.Is(err, ErrNotFound) {
+	if _, err := s.ReleaseDraft(author, "no-such-draft", nil, now); !errors.Is(err, ErrNotFound) {
 		t.Errorf("release unknown: err = %v, want ErrNotFound", err)
 	}
-	if err := s.DiscardReply("no-such-draft", now); !errors.Is(err, ErrNotFound) {
+	if err := s.DiscardDraft(author, "no-such-draft", now); !errors.Is(err, ErrNotFound) {
 		t.Errorf("discard unknown: err = %v, want ErrNotFound", err)
 	}
 }
@@ -92,16 +92,16 @@ func TestReleaseReplyIllegalAndUnknown(t *testing.T) {
 func TestDiscardReply(t *testing.T) {
 	s := newStore(t)
 	now := time.Unix(1_700_000_000, 0).UTC()
-	_, _, draft := setupDraft(t, s, now)
+	_, author, draft := setupDraft(t, s, now)
 
-	if err := s.DiscardReply(draft, now); err != nil {
-		t.Fatalf("DiscardReply: %v", err)
+	if err := s.DiscardDraft(author, draft, now); err != nil {
+		t.Fatalf("DiscardDraft: %v", err)
 	}
 	if st := draftState(t, s, draft); st != "discarded" {
 		t.Errorf("discarded draft state = %q, want discarded", st)
 	}
 	// A discarded draft can't then be released.
-	if _, err := s.ReleaseReply(draft, now); !errors.Is(err, gate.ErrIllegalTransition) {
+	if _, err := s.ReleaseDraft(author, draft, nil, now); !errors.Is(err, gate.ErrIllegalTransition) {
 		t.Errorf("release after discard: err = %v, want wrapped gate.ErrIllegalTransition", err)
 	}
 }

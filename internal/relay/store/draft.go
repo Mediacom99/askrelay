@@ -40,6 +40,16 @@ func (s *Store) CreateDraft(threadID, authorID string, e envelope.Envelope, now 
 		if authorID != initiator && authorID != recipient {
 			return ErrNotParticipant
 		}
+		// The message's recipient (e.To) must be the thread's OTHER party — a
+		// participant cannot draft a message addressed to an unrelated person
+		// onto this thread.
+		other := recipient
+		if authorID == recipient {
+			other = initiator
+		}
+		if e.To != other {
+			return ErrNotParticipant
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO drafts (id, thread_id, author_id, envelope, state, created_at)
 			 VALUES (?, ?, ?, ?, 'pending_review', ?)`,
@@ -54,16 +64,31 @@ func (s *Store) CreateDraft(threadID, authorID string, e envelope.Envelope, now 
 	return e.ID, nil
 }
 
-// ReleaseReply applies a human release to a draft's outbound gate and returns
-// the minted capability. No state parameter (F3); load + gate + write in one
-// transaction (TOCTOU). WP-08 signs Release.Payload() and delivers, matching
-// Thread()+ID().
-func (s *Store) ReleaseReply(draftID string, now time.Time) (*gate.Release, error) {
+// ReleaseDraft applies the author's release to their pending draft, optionally
+// replacing the body with editedText first — a FRESH envelope, never mutating
+// the one handed to the gate (WP-02) — all in one transaction. Author-gated:
+// a draft that isn't the caller's (or is absent) is ErrNotFound (no oracle).
+// No state parameter (F3). Returns the *gate.Release for WP-08 to sign +
+// deliver, matching Thread()+ID().
+func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now time.Time) (*gate.Release, error) {
 	var rel *gate.Release
 	err := s.writeTx(func(tx *sql.Tx) error {
-		thread, cur, payload, err := loadDraft(tx, draftID)
+		thread, author, cur, payload, err := loadDraft(tx, draftID)
 		if err != nil {
 			return err
+		}
+		if author != personID {
+			return ErrNotFound
+		}
+		if editedText != nil {
+			payload.Body = envelope.Message{Role: payload.Body.Role, Parts: []envelope.Part{{Type: "text", Text: *editedText}}}
+			blob, merr := json.Marshal(payload)
+			if merr != nil {
+				return fmt.Errorf("store: marshal edited draft: %w", merr)
+			}
+			if _, uerr := tx.Exec(`UPDATE drafts SET envelope=? WHERE id=?`, blob, draftID); uerr != nil {
+				return fmt.Errorf("store: apply edit: %w", uerr)
+			}
 		}
 		appr := gate.Approvable{
 			Kind: gate.KindMessage, Direction: gate.Outbound,
@@ -71,7 +96,7 @@ func (s *Store) ReleaseReply(draftID string, now time.Time) (*gate.Release, erro
 		}
 		next, r, err := gate.ApplyOutbound(appr, cur, gate.Approve)
 		if err != nil {
-			return fmt.Errorf("store: release reply: %w", err)
+			return fmt.Errorf("store: release draft: %w", err)
 		}
 		if err := setDraftDecided(tx, draftID, next, false, now); err != nil {
 			return err
@@ -85,12 +110,16 @@ func (s *Store) ReleaseReply(draftID string, now time.Time) (*gate.Release, erro
 	return rel, nil
 }
 
-// DiscardReply rejects a draft (→ discarded); mints no capability.
-func (s *Store) DiscardReply(draftID string, now time.Time) error {
+// DiscardDraft rejects the author's pending draft (→ discarded); mints no
+// capability. Author-gated (ErrNotFound if not theirs).
+func (s *Store) DiscardDraft(personID, draftID string, now time.Time) error {
 	return s.writeTx(func(tx *sql.Tx) error {
-		thread, cur, payload, err := loadDraft(tx, draftID)
+		thread, author, cur, payload, err := loadDraft(tx, draftID)
 		if err != nil {
 			return err
+		}
+		if author != personID {
+			return ErrNotFound
 		}
 		appr := gate.Approvable{
 			Kind: gate.KindMessage, Direction: gate.Outbound,
@@ -98,7 +127,7 @@ func (s *Store) DiscardReply(draftID string, now time.Time) error {
 		}
 		next, _, err := gate.ApplyOutbound(appr, cur, gate.Reject)
 		if err != nil {
-			return fmt.Errorf("store: discard reply: %w", err)
+			return fmt.Errorf("store: discard draft: %w", err)
 		}
 		return setDraftDecided(tx, draftID, next, false, now)
 	})
@@ -111,9 +140,12 @@ func (s *Store) DiscardReply(draftID string, now time.Time) error {
 func (s *Store) ReleaseReplyViaGrant(draftID, granterID string, now time.Time) (*gate.Release, error) {
 	var rel *gate.Release
 	err := s.writeTx(func(tx *sql.Tx) error {
-		thread, cur, payload, err := loadDraft(tx, draftID)
+		thread, author, cur, payload, err := loadDraft(tx, draftID)
 		if err != nil {
 			return err
+		}
+		if author != granterID {
+			return nil // you only auto-release your OWN drafts
 		}
 		var gid string
 		err = tx.QueryRow(
@@ -147,24 +179,24 @@ func (s *Store) ReleaseReplyViaGrant(draftID, granterID string, now time.Time) (
 	return rel, nil
 }
 
-// loadDraft reads a draft's authoritative state and decodes its stored
+// loadDraft reads a draft's thread, author, authoritative state, and decoded
 // (unsigned) envelope. ErrNotFound if the draft is absent.
-func loadDraft(tx *sql.Tx, draftID string) (thread string, cur gate.DraftState, payload envelope.Envelope, err error) {
+func loadDraft(tx *sql.Tx, draftID string) (thread, author string, cur gate.DraftState, payload envelope.Envelope, err error) {
 	var state string
 	var blob []byte
-	err = tx.QueryRow(`SELECT thread_id, state, envelope FROM drafts WHERE id=?`, draftID).
-		Scan(&thread, &state, &blob)
+	err = tx.QueryRow(`SELECT thread_id, author_id, state, envelope FROM drafts WHERE id=?`, draftID).
+		Scan(&thread, &author, &state, &blob)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", envelope.Envelope{}, ErrNotFound
+		return "", "", "", envelope.Envelope{}, ErrNotFound
 	}
 	if err != nil {
-		return "", "", envelope.Envelope{}, fmt.Errorf("store: load draft: %w", err)
+		return "", "", "", envelope.Envelope{}, fmt.Errorf("store: load draft: %w", err)
 	}
 	e, err := envelope.Decode(blob)
 	if err != nil {
-		return "", "", envelope.Envelope{}, fmt.Errorf("store: decode draft: %w", err)
+		return "", "", "", envelope.Envelope{}, fmt.Errorf("store: decode draft: %w", err)
 	}
-	return thread, gate.DraftState(state), e, nil
+	return thread, author, gate.DraftState(state), e, nil
 }
 
 func setDraftDecided(tx *sql.Tx, draftID string, next gate.DraftState, viaGrant bool, now time.Time) error {
