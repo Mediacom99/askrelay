@@ -31,6 +31,17 @@ type waitOutput struct {
 	Activity bool `json:"activity"` // true → call check_inbox
 }
 
+// effectiveTimeout clamps the requested wait to the client's profile cap (T-10);
+// a non-positive or over-cap request becomes the cap. Extracted so the clamp is
+// unit-testable without a wall-clock wait.
+func effectiveTimeout(requestedSecs int, clientType string) time.Duration {
+	d := time.Duration(requestedSecs) * time.Second
+	if capped := profileCap(clientType); d <= 0 || d > capped {
+		return capped
+	}
+	return d
+}
+
 // addWaitForActivity registers wait_for_activity, bound to person and their
 // client profile. It naively polls the store; the daemon uses the WS hub
 // (WP-08) for true push instead.
@@ -40,11 +51,12 @@ func (h *Handler) addWaitForActivity(s *sdkmcp.Server, person, clientType string
 		Description: "Long-poll: returns when you have activity to check, or after a timeout capped by your client.",
 		Annotations: &sdkmcp.ToolAnnotations{ReadOnlyHint: true},
 	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in waitInput) (*sdkmcp.CallToolResult, waitOutput, error) {
-		d := time.Duration(in.TimeoutSeconds) * time.Second
-		if capped := profileCap(clientType); d <= 0 || d > capped {
-			d = capped
+		if !h.waitAcquire(person) {
+			return emptyResult(), waitOutput{Activity: false}, nil // too many concurrent waits
 		}
-		deadline := time.Now().Add(d)
+		defer h.waitRelease(person)
+
+		deadline := time.Now().Add(effectiveTimeout(in.TimeoutSeconds, clientType))
 		// ponytail: naive per-second store poll — fine for pull clients on a
 		// single-team relay; the WS hub (WP-08) is the real-time / scale path.
 		for {
@@ -54,17 +66,16 @@ func (h *Handler) addWaitForActivity(s *sdkmcp.Server, person, clientType string
 				return nil, waitOutput{}, errInternal
 			}
 			if has {
-				return nil, waitOutput{Activity: true}, nil
+				return emptyResult(), waitOutput{Activity: true}, nil
 			}
 			remaining := time.Until(deadline)
 			if remaining <= 0 {
-				return nil, waitOutput{Activity: false}, nil
+				return emptyResult(), waitOutput{Activity: false}, nil
 			}
-			wait := min(pollInterval, remaining)
 			select {
-			case <-ctx.Done(): // client disconnected
+			case <-ctx.Done(): // client disconnected — idiomatic cancellation
 				return nil, waitOutput{}, ctx.Err()
-			case <-time.After(wait):
+			case <-time.After(min(pollInterval, remaining)):
 			}
 		}
 	})

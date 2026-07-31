@@ -40,7 +40,7 @@ func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
 	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))
-	s.mux.Handle("POST /mcp", s.bearer(mcp.NewHandler(st, log, Version).HTTPHandler()))
+	s.mux.Handle("POST /mcp", s.bearer(maxBytes(mcp.NewHandler(st, log, Version).HTTPHandler(), maxMCPBody)))
 	return s
 }
 
@@ -100,6 +100,18 @@ type statusRecorder struct {
 func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// maxMCPBody bounds a /mcp request body — the WP-07 ingress note (a 64 KiB
+// envelope + JSON-RPC framing fits comfortably).
+const maxMCPBody = 128 << 10
+
+// maxBytes caps the request body of next (WP-01/03 ingress discipline).
+func maxBytes(next http.Handler, n int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, n)
+		next.ServeHTTP(w, r)
+	})
 }
 
 // writeJSON writes v as a JSON body with the given status.

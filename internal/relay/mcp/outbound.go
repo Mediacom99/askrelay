@@ -14,8 +14,11 @@ import (
 )
 
 // errNotReviewable is the sanitized error for a release/discard of a draft that
-// is not pending_review.
-var errNotReviewable = errors.New("draft is not awaiting review")
+// is not pending_review. errTooLong caps message/edit text at MaxBodyBytes.
+var (
+	errNotReviewable = errors.New("draft is not awaiting review")
+	errTooLong       = errors.New("message text is too long")
+)
 
 type sendMessageInput struct {
 	To     string `json:"to" jsonschema:"recipient email (must be on the roster)"`
@@ -39,14 +42,22 @@ func (h *Handler) addSendMessage(s *sdkmcp.Server, person string) {
 		Description: "Ask or reply. The outbound gate holds it for your review unless a grant covers the thread.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in sendMessageInput) (*sdkmcp.CallToolResult, sendMessageOutput, error) {
 		now := time.Now().UTC()
+		if len(in.Text) > envelope.MaxBodyBytes {
+			return nil, sendMessageOutput{}, errTooLong
+		}
 
 		recipient, err := h.store.PersonByEmail(in.To)
 		if errors.Is(err, store.ErrNotFound) {
+			// Accepted membership oracle (maintainer decision): the tool needs
+			// to tell the user an unknown recipient on a same-team relay.
 			return nil, sendMessageOutput{}, errors.New("recipient is not on the roster")
 		}
 		if err != nil {
 			h.log.Error("send_message: resolve recipient", "err", err)
 			return nil, sendMessageOutput{}, errInternal
+		}
+		if recipient.ID == person {
+			return nil, sendMessageOutput{}, errors.New("cannot send a message to yourself")
 		}
 
 		threadID := in.Thread
@@ -64,8 +75,8 @@ func (h *Handler) addSendMessage(s *sdkmcp.Server, person string) {
 			envelope.Message{Role: "agent", Parts: []envelope.Part{{Type: "text", Text: in.Text}}},
 		)
 		draftID, err := h.store.CreateDraft(threadID, person, e, now)
-		if errors.Is(err, store.ErrNotParticipant) {
-			return nil, sendMessageOutput{}, errNotFound // not your thread — no oracle
+		if errors.Is(err, store.ErrNotParticipant) || errors.Is(err, store.ErrNotFound) {
+			return nil, sendMessageOutput{}, errNotFound // unknown/not-your thread — no oracle
 		}
 		if err != nil {
 			h.log.Error("send_message: create draft", "err", err)
@@ -83,7 +94,7 @@ func (h *Handler) addSendMessage(s *sdkmcp.Server, person string) {
 		if rel != nil {
 			state = "sent"
 		}
-		return nil, sendMessageOutput{DraftID: draftID, ThreadID: threadID, State: state}, nil
+		return emptyResult(), sendMessageOutput{DraftID: draftID, ThreadID: threadID, State: state}, nil
 	})
 }
 
@@ -108,11 +119,14 @@ func (h *Handler) addOutboundVerdicts(s *sdkmcp.Server, person string) {
 		Name:        "approve_reply",
 		Description: "Release one of your drafts (optionally editing it first).",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in approveReplyInput) (*sdkmcp.CallToolResult, replyOutput, error) {
+		if in.EditedText != nil && len(*in.EditedText) > envelope.MaxBodyBytes {
+			return nil, replyOutput{}, errTooLong
+		}
 		_, err := h.store.ReleaseDraft(person, in.ID, in.EditedText, time.Now().UTC())
 		if e := mapReplyErr(h, "approve_reply", err); e != nil {
 			return nil, replyOutput{}, e
 		}
-		return nil, replyOutput{ID: in.ID, State: "sent"}, nil
+		return emptyResult(), replyOutput{ID: in.ID, State: "sent"}, nil
 	})
 
 	sdkmcp.AddTool(s, &sdkmcp.Tool{
@@ -123,7 +137,7 @@ func (h *Handler) addOutboundVerdicts(s *sdkmcp.Server, person string) {
 		if e := mapReplyErr(h, "discard_reply", err); e != nil {
 			return nil, replyOutput{}, e
 		}
-		return nil, replyOutput{ID: in.ID, State: "discarded"}, nil
+		return emptyResult(), replyOutput{ID: in.ID, State: "discarded"}, nil
 	})
 }
 

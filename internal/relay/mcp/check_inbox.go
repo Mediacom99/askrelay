@@ -57,17 +57,14 @@ func (h *Handler) addCheckInbox(s *sdkmcp.Server, person string) {
 				continue
 			}
 			out.ToApprove = append(out.ToApprove, inboxEntry{ID: it.MessageID, ThreadID: it.ThreadID, Kind: "message"})
-			text.WriteString(Spotlight(e, it.SenderEmail+" (device verified)"))
+			// InboundAwaiting filters to input-required threads, so that is the
+			// authoritative state (never the sender's self-asserted e.State).
+			text.WriteString(Spotlight(e, it.SenderEmail+" (device verified)", "input-required"))
 			text.WriteString("\n\n")
 		}
 		for _, d := range drafts {
 			out.ToReview = append(out.ToReview, inboxEntry{ID: d.DraftID, ThreadID: d.ThreadID, Kind: "draft"})
 		}
-
-		result := &sdkmcp.CallToolResult{}
-		if text.Len() > 0 {
-			result.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: strings.TrimRight(text.String(), "\n")}}
-		}
-		return result, out, nil
+		return textResult(strings.TrimRight(text.String(), "\n")), out, nil
 	})
 }

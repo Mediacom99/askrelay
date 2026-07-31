@@ -40,6 +40,16 @@ func (s *Store) CreateDraft(threadID, authorID string, e envelope.Envelope, now 
 		if authorID != initiator && authorID != recipient {
 			return ErrNotParticipant
 		}
+		// The message's recipient (e.To) must be the thread's OTHER party — a
+		// participant cannot draft a message addressed to an unrelated person
+		// onto this thread.
+		other := recipient
+		if authorID == recipient {
+			other = initiator
+		}
+		if e.To != other {
+			return ErrNotParticipant
+		}
 		if _, err := tx.Exec(
 			`INSERT INTO drafts (id, thread_id, author_id, envelope, state, created_at)
 			 VALUES (?, ?, ?, ?, 'pending_review', ?)`,

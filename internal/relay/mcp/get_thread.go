@@ -57,17 +57,13 @@ func (h *Handler) addGetThread(s *sdkmcp.Server, person string) {
 				continue
 			}
 			out.Messages = append(out.Messages, threadMsg{ID: m.MessageID, From: m.SenderEmail})
-			text.WriteString(Spotlight(e, m.SenderEmail+" (device verified)"))
+			// view.State is the authoritative thread state (never e.State).
+			text.WriteString(Spotlight(e, m.SenderEmail+" (device verified)", view.State))
 			text.WriteString("\n\n")
 		}
 		for _, d := range view.Drafts {
 			out.Drafts = append(out.Drafts, inboxEntry{ID: d.DraftID, ThreadID: d.ThreadID, Kind: "draft"})
 		}
-
-		result := &sdkmcp.CallToolResult{}
-		if text.Len() > 0 {
-			result.Content = []sdkmcp.Content{&sdkmcp.TextContent{Text: strings.TrimRight(text.String(), "\n")}}
-		}
-		return result, out, nil
+		return textResult(strings.TrimRight(text.String(), "\n")), out, nil
 	})
 }

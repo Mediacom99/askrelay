@@ -74,9 +74,14 @@ func (s *Store) inboundMessageVerdict(personID, messageID string, v gate.Verdict
 	var next a2a.ThreadState
 	err := s.writeTx(func(tx *sql.Tx) error {
 		var threadID, sender, initiator, recipient, state string
+		// Bind the verdict to the thread's LATEST not-mine message — the one
+		// check_inbox actually shows. A stale message id returns no row →
+		// ErrNotFound, so approving something never surfaced is impossible.
 		err := tx.QueryRow(
 			`SELECT m.thread_id, m.sender_id, t.initiator_id, t.recipient_id, t.state
-			 FROM messages m JOIN threads t ON t.id = m.thread_id WHERE m.id = ?`, messageID).
+			 FROM messages m JOIN threads t ON t.id = m.thread_id
+			 WHERE m.id = ?
+			   AND m.received_at = (SELECT MAX(received_at) FROM messages WHERE thread_id = m.thread_id)`, messageID).
 			Scan(&threadID, &sender, &initiator, &recipient, &state)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
@@ -149,6 +154,9 @@ func (s *Store) SetThreadGrant(threadID, personID string, dir gate.Direction, no
 // RevokeThreadGrant marks the active grant on this triple revoked (a mark, not
 // a delete — the row stays as audit history). ErrNotFound if none is active.
 func (s *Store) RevokeThreadGrant(threadID, personID string, dir gate.Direction, now time.Time) error {
+	if dir != gate.Inbound && dir != gate.Outbound {
+		return fmt.Errorf("store: revoke grant: %w", gate.ErrWrongDirection)
+	}
 	return s.writeTx(func(tx *sql.Tx) error {
 		if err := requireParticipant(tx, threadID, personID); err != nil {
 			return err

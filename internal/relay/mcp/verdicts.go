@@ -42,7 +42,7 @@ func (h *Handler) addInboundVerdicts(s *sdkmcp.Server, person string) {
 					h.log.Error(name, "err", err)
 					return nil, verdictOutput{}, errInternal
 				}
-				return nil, verdictOutput{ID: in.ID, ThreadState: state}, nil
+				return emptyResult(), verdictOutput{ID: in.ID, ThreadState: state}, nil
 			})
 	}
 	verdict("approve_message", "Approve an inbound message awaiting your verdict.", func(id string) (string, error) {
@@ -94,6 +94,6 @@ func (h *Handler) addSetThreadGrant(s *sdkmcp.Server, person string) {
 			h.log.Error("set_thread_grant", "err", err)
 			return nil, setGrantOutput{}, errInternal
 		}
-		return nil, setGrantOutput(in), nil
+		return emptyResult(), setGrantOutput(in), nil
 	})
 }
