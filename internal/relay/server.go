@@ -27,6 +27,7 @@ type Server struct {
 	issuer *oauth.Issuer
 	log    *slog.Logger
 	mux    *http.ServeMux
+	hub    *hub
 	// bearer guards protected routes with access-token validation. WP-07 wraps
 	// /mcp with it; nothing uses it yet in the skeleton.
 	bearer func(http.Handler) http.Handler
@@ -35,12 +36,13 @@ type Server struct {
 // NewServer wires the routes; it does not listen. store, issuer, and log must
 // be non-nil.
 func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger) *Server {
-	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux(), hub: newHub()}
 	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL, log)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
 	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))
 	s.mux.Handle("POST /mcp", s.bearer(maxBytes(mcp.NewHandler(st, log, Version).HTTPHandler(), maxMCPBody)))
+	s.mux.HandleFunc("GET /ws", s.handleWS)
 	return s
 }
 
@@ -101,6 +103,11 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.status = code
 	r.ResponseWriter.WriteHeader(code)
 }
+
+// Unwrap exposes the underlying ResponseWriter so http.ResponseController can
+// reach its Hijacker — the WebSocket upgrade (/ws) hijacks the connection, and
+// without this the logging wrapper hides that capability (a 501 at Accept).
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
 
 // maxMCPBody bounds a /mcp request body — the WP-07 ingress note (a 64 KiB
 // envelope + JSON-RPC framing fits comfortably).
