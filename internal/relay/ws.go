@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/Mediacom99/askrelay/internal/envelope"
+	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
 
 // maxWSFrame bounds an inbound /ws frame (acks are tiny; sized ahead for the
@@ -147,12 +150,56 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 			s.log.Warn("ws: bad frame", "err", err)
 			continue
 		}
-		if f.Type == "ack" && f.ID != "" {
-			if err := s.store.Ack(f.ID, device, time.Now().UTC()); err != nil {
-				s.log.Warn("ws: ack", "err", err, "message_id", f.ID)
+		switch f.Type {
+		case "ack":
+			if f.ID != "" {
+				if err := s.store.Ack(f.ID, device, time.Now().UTC()); err != nil {
+					s.log.Warn("ws: ack", "err", err, "message_id", f.ID)
+				}
 			}
+		case "submit":
+			s.handleSubmit(person, device, f.Envelope)
+		default:
+			s.log.Warn("ws: unknown frame type", "type", f.Type)
 		}
 	}
+}
+
+// handleSubmit ingests a signed envelope a daemon submitted over /ws. Security
+// boundary (WP-03/07): the envelope must be signed by THIS authenticated device
+// (Verify against its pubkey; the live ActiveDeviceByID re-check doubles as the
+// mid-session revocation kill switch) AND claim a From.Person equal to the
+// socket's authenticated person. The senderID handed to the store is that
+// authenticated person, never the envelope's self-assertion. Refusals are logged
+// (T-18, ids/shapes only) and dropped; the durable daemon queue re-submits.
+func (s *Server) handleSubmit(person, device string, raw json.RawMessage) {
+	now := time.Now().UTC()
+	e, err := envelope.Decode(raw)
+	if err != nil {
+		s.log.Warn("ws: submit decode", "err", err, "device_id", device)
+		return
+	}
+	dev, err := s.store.ActiveDeviceByID(device) // live kill switch + pubkey source
+	if err != nil {
+		s.log.Warn("ws: submit device inactive", "device_id", device)
+		return
+	}
+	if err := envelope.Verify(e, dev.PubKey); err != nil {
+		s.log.Warn("ws: submit bad signature", "err", err, "device_id", device)
+		return
+	}
+	if e.From.Person != person {
+		s.log.Warn("ws: submit signer mismatch", "device_id", device) // signed a claim it can't make
+		return
+	}
+	fresh := store.Freshness{MaxAge: s.cfg.MaxAge, MaxSkew: s.cfg.MaxSkew}
+	if err := s.store.IngestMessage(e, person, fresh, now); err != nil {
+		s.log.Warn("ws: submit ingest", "err", err, "message_id", e.ID)
+		return
+	}
+	s.Notify(e.To)
+	s.log.Info("ws: submitted", "person_id", person, "device_id", device,
+		"message_id", e.ID, "thread_id", e.Thread)
 }
 
 // pushInbox drains a device's unacked inbox to its socket, marking each

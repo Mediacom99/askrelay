@@ -47,7 +47,10 @@ func testServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatalf("oauth.NewIssuer: %v", err)
 	}
-	cfg := Config{ListenAddr: "127.0.0.1:0", DBPath: "x", BaseURL: "https://relay.example.com"}
+	cfg := Config{
+		ListenAddr: "127.0.0.1:0", DBPath: "x", BaseURL: "https://relay.example.com",
+		MaxAge: 24 * time.Hour, MaxSkew: 5 * time.Minute,
+	}
 	return NewServer(cfg, st, iss, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
