@@ -125,8 +125,8 @@ func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now t
 // and trusted and daemon-signed delivery (WP-09) does not yet exist. Upgrade path:
 // prefer/require the signed path and gate this one once both coexist on a remote
 // multi-tenant relay.
-func (s *Store) DeliverDraft(draftID string, now time.Time) error {
-	return s.writeTx(func(tx *sql.Tx) error {
+func (s *Store) DeliverDraft(draftID string, now time.Time) (recipientID string, err error) {
+	err = s.writeTx(func(tx *sql.Tx) error {
 		thread, author, cur, payload, err := loadDraft(tx, draftID)
 		if err != nil {
 			return err
@@ -134,6 +134,7 @@ func (s *Store) DeliverDraft(draftID string, now time.Time) error {
 		if cur != gate.Sent {
 			return ErrNotFound // only a released draft is deliverable
 		}
+		recipientID = payload.To
 		payload.SentAt = now // "sent" = when released, not when drafted
 		if err := ingestTx(tx, payload, author, now); err != nil {
 			return err
@@ -145,6 +146,7 @@ func (s *Store) DeliverDraft(draftID string, now time.Time) error {
 		}
 		return nil
 	})
+	return recipientID, err
 }
 
 // DiscardDraft rejects the author's pending draft (→ discarded); mints no

@@ -167,8 +167,12 @@ func TestDeliverDraft(t *testing.T) {
 		t.Fatalf("ReleaseDraft: %v", err)
 	}
 	deliverAt := now.Add(time.Minute)
-	if err := s.DeliverDraft(draft, deliverAt); err != nil {
+	got, err := s.DeliverDraft(draft, deliverAt)
+	if err != nil {
 		t.Fatalf("DeliverDraft: %v", err)
+	}
+	if got != asker {
+		t.Errorf("DeliverDraft recipient = %q, want the asker %q", got, asker)
 	}
 
 	// The reply is now the asker's inbound, on an input-required thread.
@@ -181,13 +185,13 @@ func TestDeliverDraft(t *testing.T) {
 	}
 
 	// Idempotent: redelivery is a replay (dedup on the envelope id).
-	if err := s.DeliverDraft(draft, deliverAt); !errors.Is(err, ErrReplay) {
+	if _, err := s.DeliverDraft(draft, deliverAt); !errors.Is(err, ErrReplay) {
 		t.Errorf("redeliver: err = %v, want ErrReplay", err)
 	}
 
 	// An unreleased (still pending_review) draft is not deliverable.
 	_, _, pending := setupDraft(t, s, now)
-	if err := s.DeliverDraft(pending, now); !errors.Is(err, ErrNotFound) {
+	if _, err := s.DeliverDraft(pending, now); !errors.Is(err, ErrNotFound) {
 		t.Errorf("deliver pending draft: err = %v, want ErrNotFound", err)
 	}
 }

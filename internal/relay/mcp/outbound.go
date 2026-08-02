@@ -93,10 +93,12 @@ func (h *Handler) addSendMessage(s *sdkmcp.Server, person string) {
 		}
 		if rel != nil {
 			state = "sent"
-			if err := h.store.DeliverDraft(draftID, now); err != nil {
+			recipientID, err := h.store.DeliverDraft(draftID, now)
+			if err != nil {
 				h.log.Error("send_message: deliver", "err", err)
 				return nil, sendMessageOutput{}, errInternal
 			}
+			h.notify(recipientID)
 		}
 		return emptyResult(), sendMessageOutput{DraftID: draftID, ThreadID: threadID, State: state}, nil
 	})
@@ -131,10 +133,12 @@ func (h *Handler) addOutboundVerdicts(s *sdkmcp.Server, person string) {
 		if e := mapReplyErr(h, "approve_reply", err); e != nil {
 			return nil, replyOutput{}, e
 		}
-		if err := h.store.DeliverDraft(in.ID, now); err != nil {
+		recipientID, err := h.store.DeliverDraft(in.ID, now)
+		if err != nil {
 			h.log.Error("approve_reply: deliver", "err", err)
 			return nil, replyOutput{}, errInternal
 		}
+		h.notify(recipientID)
 		return emptyResult(), replyOutput{ID: in.ID, State: "sent"}, nil
 	})
 

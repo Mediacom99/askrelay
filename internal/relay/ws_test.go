@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,7 +12,50 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/Mediacom99/askrelay/internal/a2a"
+	"github.com/Mediacom99/askrelay/internal/envelope"
+	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
+
+// ingestTo ingests a fresh message from sender to recipient (a new thread),
+// fanning out a delivery row to the recipient's active devices. Returns the
+// message id.
+func ingestTo(t *testing.T, s *Server, sender, recipient string) string {
+	t.Helper()
+	now := time.Now().UTC()
+	e := envelope.New(envelope.Party{Person: sender}, recipient, "", a2a.StateSubmitted, false,
+		envelope.Message{Role: "user", Parts: []envelope.Part{{Type: "text", Text: "hi"}}})
+	fresh := store.Freshness{MaxAge: 24 * time.Hour, MaxSkew: time.Minute}
+	if err := s.store.IngestMessage(e, sender, fresh, now); err != nil {
+		t.Fatalf("IngestMessage: %v", err)
+	}
+	return e.ID
+}
+
+// readMessage reads one text frame and asserts it is a "message" for wantID.
+func readMessage(ctx context.Context, t *testing.T, c *websocket.Conn, wantID string) {
+	t.Helper()
+	_, data, err := c.Read(ctx)
+	if err != nil {
+		t.Fatalf("read frame: %v", err)
+	}
+	var f wsFrame
+	if err := json.Unmarshal(data, &f); err != nil {
+		t.Fatalf("unmarshal frame: %v", err)
+	}
+	if f.Type != "message" || f.ID != wantID {
+		t.Fatalf("frame = %+v, want type=message id=%q", f, wantID)
+	}
+}
+
+func ackMessage(ctx context.Context, t *testing.T, c *websocket.Conn, id string) {
+	t.Helper()
+	b, _ := json.Marshal(wsFrame{Type: "ack", ID: id})
+	if err := c.Write(ctx, websocket.MessageText, b); err != nil {
+		t.Fatalf("write ack: %v", err)
+	}
+}
 
 // enrollDevice registers a fresh device and returns its ids + WS credential.
 func enrollDevice(t *testing.T, s *Server, email string) (personID, deviceID, cred string) {
@@ -86,6 +130,61 @@ func TestWSConnectAndRegister(t *testing.T) {
 	if !waitFor(func() bool { return s.hub.count(person) == 0 }) {
 		t.Fatalf("hub count = %d, want 0 after close", s.hub.count(person))
 	}
+}
+
+func TestWSDeliverOnConnectAndAck(t *testing.T) {
+	s := testServer(t)
+	person, device, cred := enrollDevice(t, s, "marco@example.com")
+	sender, _, _ := enrollDevice(t, s, "sender@example.com")
+	srv := httptest.NewServer(s.logRequests(s.mux))
+	defer srv.Close()
+
+	// Message waiting before the daemon connects → resent on connect.
+	msgID := ingestTo(t, s, sender, person)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := dialWS(ctx, srv.URL, cred)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close(websocket.StatusNormalClosure, "bye")
+
+	readMessage(ctx, t, c, msgID)
+	ackMessage(ctx, t, c, msgID)
+
+	// The ack clears the device's unacked inbox (the retention signal).
+	if !waitFor(func() bool {
+		items, e := s.store.Inbox(device)
+		return e == nil && len(items) == 0
+	}) {
+		t.Fatalf("inbox not empty after ack")
+	}
+}
+
+func TestWSLivePush(t *testing.T) {
+	s := testServer(t)
+	person, _, cred := enrollDevice(t, s, "marco@example.com")
+	sender, _, _ := enrollDevice(t, s, "sender@example.com")
+	srv := httptest.NewServer(s.logRequests(s.mux))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := dialWS(ctx, srv.URL, cred)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close(websocket.StatusNormalClosure, "bye")
+	// Ensure the socket is registered before the delivery so Notify sees it.
+	if !waitFor(func() bool { return s.hub.count(person) == 1 }) {
+		t.Fatal("socket not registered")
+	}
+
+	// Deliver after connect, then push — the frame arrives without a reconnect.
+	msgID := ingestTo(t, s, sender, person)
+	s.Notify(person)
+	readMessage(ctx, t, c, msgID)
 }
 
 func TestWSAuthRejected(t *testing.T) {

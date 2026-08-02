@@ -41,7 +41,7 @@ func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
 	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))
-	s.mux.Handle("POST /mcp", s.bearer(maxBytes(mcp.NewHandler(st, log, Version).HTTPHandler(), maxMCPBody)))
+	s.mux.Handle("POST /mcp", s.bearer(maxBytes(mcp.NewHandler(st, log, Version, s).HTTPHandler(), maxMCPBody)))
 	s.mux.HandleFunc("GET /ws", s.handleWS)
 	return s
 }

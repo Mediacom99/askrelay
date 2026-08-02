@@ -16,19 +16,35 @@ import (
 // carries an authenticated person; the tools are bound to that person per
 // request. No MCP session state is kept (D-06, T-07: stateless).
 type Handler struct {
-	store   *store.Store
-	log     *slog.Logger
-	version string
+	store    *store.Store
+	log      *slog.Logger
+	version  string
+	notifier Notifier
 
 	mu      sync.Mutex     // guards waiting
 	waiting map[string]int // concurrent wait_for_activity calls per person
 }
 
+// Notifier receives a delivery push signal for a person after a message is
+// ingested for them — satisfied by the relay's WebSocket hub. Kept an interface
+// (not a concrete import) so the mcp package doesn't depend on the relay package
+// that mounts it. A nil notifier disables push (WP-07 tests).
+type Notifier interface {
+	Notify(personID string)
+}
+
 // NewHandler builds the MCP surface. version labels the server in the MCP
 // Implementation (passed in rather than imported to avoid a cycle with the
-// relay package that mounts this).
-func NewHandler(st *store.Store, log *slog.Logger, version string) *Handler {
-	return &Handler{store: st, log: log, version: version, waiting: map[string]int{}}
+// relay package that mounts this). notifier may be nil (no push).
+func NewHandler(st *store.Store, log *slog.Logger, version string, notifier Notifier) *Handler {
+	return &Handler{store: st, log: log, version: version, notifier: notifier, waiting: map[string]int{}}
+}
+
+// notify signals the notifier if one is configured.
+func (h *Handler) notify(personID string) {
+	if h.notifier != nil {
+		h.notifier.Notify(personID)
+	}
 }
 
 // HTTPHandler returns the stateless Streamable-HTTP handler for POST /mcp
