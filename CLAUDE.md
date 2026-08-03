@@ -19,7 +19,7 @@ the first users; OSS (Apache-2.0 + DCO, no CLA) from day one.
    decisions (T-xx), risks, and the §2 session protocol. The plan wins over
    the architecture doc where they differ.
 3. [`docs/phase2-decision-log.md`](docs/phase2-decision-log.md) — product
-   verdicts (D-01..D-18) binding both.
+   verdicts (D-01..D-23) binding both.
 4. [`docs/research/`](docs/research/README.md) — evidence briefs; every key
    fact live-verified and independently re-checked.
 
@@ -39,10 +39,12 @@ the first users; OSS (Apache-2.0 + DCO, no CLA) from day one.
   (fresh-context), `askrelay-security` (red-team on security-touching WPs).
   Their findings return to the maintainer for a fix decision. (`askrelay-dev`
   was retired at D-22.)
-- `go.mod` intentionally lists no dependencies; `cmd/askrelay/main.go` and the
-  `internal/*/doc.go` files are buildable placeholders citing their
-  architecture sections. Dependencies enter only at the plan §3 pins, only
-  when a WP first imports them.
+- Dependencies enter only at the plan §3 pins, only when a WP first imports
+  them. `go.mod` now carries the five pins those WPs pulled in (`go-sdk`,
+  `modernc.org/sqlite`, `coder/websocket`, `golang-jwt/v5`, `google/uuid`) —
+  all matching §3 exactly. `internal/daemon` and `internal/redact` are still
+  `doc.go`-only placeholders citing their architecture sections (WP-09/WP-10
+  and WP-11); every other package is implemented.
 
 ## Standing constraints (full rationale in the decision log)
 
