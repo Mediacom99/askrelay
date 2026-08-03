@@ -40,3 +40,7 @@ Thumbs.db
 .claude/memory/
 .claude/settings.local.json
 /askrelay-checkpoint.html
+
+# Dev-only harness (build tag `dev`, uncommitted)
+/devharness
+/cmd/devharness/
