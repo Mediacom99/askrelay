@@ -502,9 +502,9 @@ any other ingest path.
 
 ### WP-08 — WS hub, delivery, retention sweeper
 
-**Status:** IN_PROGRESS (branch `wp-08-delivery`; 5 subtasks committed, quality
-pass in flight, **one blocking security finding open** — see *Current state*
-below) · **Depends on:** WP-03 WP-04 · **Gated by:** T-04 T-09 ·
+**Status:** IN_PROGRESS (branch `wp-08-delivery`; code complete, three-agent
+quality pass complete and **all findings fixed**, PR open — awaiting merge; see
+*Quality pass* below) · **Depends on:** WP-03 WP-04 · **Gated by:** T-04 T-09 ·
 **Spec:** arch §4.2, §4.5, §6.
 
 **Goal:** `/ws` (device-credential auth): push new-mail/approval events,
@@ -514,11 +514,14 @@ retention sweeper goroutine wired to T-09 knobs.
 **Dependency added:** `github.com/coder/websocket v1.8.15`.
 
 **Delivery obligations (surfaced by WP-07):**
-- **Consume `sent` drafts.** WP-07's `send_message`/`approve_reply` release a
-  draft to `sent` and mint a `*gate.Release`; delivery is what signs the
-  payload and turns it into the recipient's inbound `messages` row
-  (`IngestMessage`). Scan `sent`-but-undelivered drafts (or drain a release
-  queue) — nothing delivers until this exists.
+- **Consume `sent` drafts** — DONE, folded into release. `send_message`/
+  `approve_reply` release a draft to `sent`; that release now **also delivers**
+  in the *same* transaction (`ReleaseDraft`/`ReleaseReplyViaGrant` →
+  `deliverInTx` → the shared `ingestTx`), so a `sent`-but-undelivered state
+  cannot exist. Delivery is **relay-attested** — the released envelope is
+  unsigned; the author was OAuth-authenticated at create+release and the relay
+  is the trust anchor (D-10/D-23). (Delivery does *not* sign; the daemon-signed
+  variant returns with WP-09.)
 - **Set the recipient's thread to `input-required` on delivery.**
   `IngestMessage` only sets `input-required` when it *creates* a thread; a
   delivered ask/reply onto an already-existing thread must transition the
@@ -548,33 +551,44 @@ payload-immutability note.
 at-least-once + id dedupe); ack bookkeeping vs sweeper; revocation severs live
 sockets.
 
-**Current state (2026-08-03 — branch `wp-08-delivery`, not merged):** five
-subtasks committed — (1) relay-attested delivery of released drafts, (2) `/ws`
-endpoint + device-cred auth + connection hub, (3) inbound push + ack over `/ws`,
-(4) outbound signed-submit + identity boundary, (5) retention sweeper + graceful
-WS drain. The code sits in `internal/relay/{ws.go,server.go}` and
-`internal/relay/store/{draft.go,retention.go}`. The adversarial pass is written
-but **still uncommitted**: `internal/relay/ws_adversarial_test.go` (25 tests) and
-`internal/relay/store/draft_adversarial_test.go` (8 tests).
+**Subtasks (branch `wp-08-delivery`):** (1) relay-attested delivery of released
+drafts, (2) `/ws` endpoint + device-cred auth + connection hub, (3) inbound push
++ ack over `/ws`, (4) daemon signed-submit + identity boundary — **removed by the
+quality pass (C1), deferred to WP-09**, (5) retention sweeper + graceful WS
+drain. Code in `internal/relay/{ws.go,server.go}` + `internal/relay/store/
+{draft.go,message.go}`.
 
-**Open blocking finding (adversarial pass, security):**
-`TestWSRevokedDeviceStopsReceivingPush` **fails** — a device revoked *while
-connected* keeps its live socket registered in the hub and is pushed a message
-after revocation, because `ws.go`'s `Notify`/`pushInbox` never re-check
-`ActiveDeviceByID` and `RevokeDevice` never calls `hub.remove`/`CloseNow`. That
-contradicts this entry's own test-plan line "revocation severs live sockets", so
-**WP-08 may not be marked DONE until it is fixed**. Its informational sibling
-`TestWSRevokedDeviceCanStillAck` confirms the same root cause from the other
-side: revocation is not consulted anywhere on the read loop after connect (the
-ack itself only clears that device's already-delivered mail, so it is not an
-escalation on its own).
+**Quality pass (2026-08-03, three agents — test/review/security):** the trust
+core held (signing/identity boundary, `/ws` auth with use-claim separation,
+replay/freshness with the tombstone tied to the freshness horizon, cross-thread
+injection refused, no auth oracle, no content in logs). Fixes applied on-branch
+(commit `4f7073b`); the adversarial suites are committed
+(`internal/relay/ws_adversarial_test.go`, `internal/relay/store/
+draft_adversarial_test.go`):
+- **C1 (critical) — outbound gate bypass:** the `/ws` `submit` frame ingested
+  raw signed envelopes, skipping the outbound approval gate (D-11, arch §5.3).
+  **Removed**; daemon-signed outbound is deferred to WP-09, gated through a
+  released draft there.
+- **H2 (high) — revocation severs live sockets:** `pushInbox` re-checks
+  `ActiveDeviceByID`, the read loop re-checks per frame, and a 15 s reconcile
+  (`severRevoked`) closes idle / out-of-process-revoked sockets.
+- **H3 (high) — goroutine leak:** one coalescing writer per connection with
+  bounded writes replaces the per-`Notify` `context.Background()` goroutine
+  (also collapses the O(n²) inbox re-reads).
+- **H1 (high) — `input-required` on delivery** moved into the shared `ingestTx`,
+  so both delivery paths flip an existing thread to the recipient's turn.
+- **M1 (med) — atomic release+deliver** (folded — see the consume-`sent`-drafts
+  obligation) and **M2 (med) — T-16 caps on the unsigned draft pipeline**
+  (`envelope.Validate` in `CreateDraft`/`ReleaseDraft`).
+- Lower-tier: `dev.PersonID == person` assert on `/ws` connect (L2),
+  zero-value+error on the release error path (L1), honest "`closeAll` is abrupt,
+  not a drain" wording (L6). L5 (nil-conn `hub.add`) left as unreachable.
 
 **D-23 self-talk note:** the self-talk on-ramp needs **two distinct enrolled
 person identities** owned by the same operator, not one identity talking to
 itself — `threads` carries `CHECK (initiator_id <> recipient_id)`
-(`store/migrations/0001_init.sql`), pinned by
-`TestDeliverDraftSelfThreadBlockedAtSchema`. Nothing to change; worth stating
-because D-23 makes self-talk the first-user path.
+(`store/migrations/0001_init.sql`), pinned by `TestSelfThreadBlockedAtSchema`.
+Nothing to change; worth stating because D-23 makes self-talk the first-user path.
 
 ### WP-09 — daemon core
 
