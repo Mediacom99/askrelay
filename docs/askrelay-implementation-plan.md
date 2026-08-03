@@ -20,7 +20,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-05 | relay OAuth: resource server + tokens | DONE | WP-04 | T-06 |
 | WP-06 | relay OAuth: embedded AS + client registration — **off the critical path (D-23)**, taken with browser-client signing when the browser-connector path is wanted | TODO | WP-05 | T-06 |
 | WP-07 | relay MCP surface (tools + spotlighting) | DONE | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
-| WP-08 | WS hub, delivery, retention sweeper | IN_PROGRESS | WP-03 WP-04 | T-04 T-09 |
+| WP-08 | WS hub, delivery, retention sweeper | DONE | WP-03 WP-04 | T-04 T-09 |
 | WP-09 | daemon core (enroll, queue, stdio MCP) | TODO | WP-01 WP-07 WP-08 WP-11 | T-11 |
 | WP-10 | daemon ↔ Claude Code push (channels + hooks) | TODO | WP-09 | S-01 |
 | WP-11 | `internal/redact` — secret redaction | TODO | — | T-12 |
@@ -502,10 +502,8 @@ any other ingest path.
 
 ### WP-08 — WS hub, delivery, retention sweeper
 
-**Status:** IN_PROGRESS (branch `wp-08-delivery`; code complete, three-agent
-quality pass complete and **all findings fixed**, PR open — awaiting merge; see
-*Quality pass* below) · **Depends on:** WP-03 WP-04 · **Gated by:** T-04 T-09 ·
-**Spec:** arch §4.2, §4.5, §6.
+**Status:** DONE (2026-08-03, PR #7) · **Depends on:** WP-03 WP-04 ·
+**Gated by:** T-04 T-09 · **Spec:** arch §4.2, §4.5, §6.
 
 **Goal:** `/ws` (device-credential auth): push new-mail/approval events,
 accept outbound envelopes, track per-device acks; resend-on-reconnect;
@@ -840,6 +838,36 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
   WP-08:** consume `sent` drafts + sign/deliver, set the recipient thread to
   `input-required` on delivery onto an existing thread, and the still-open
   browser-client signing model (all recorded in the WP-08 entry). Changed: WP-08.
+- 2026-08-03 — **WP-08 DONE** (PR #7; WS hub, delivery, retention sweeper —
+  completes the cross-person A→B→A loop). Dep: `github.com/coder/websocket
+  v1.8.15` (§3 pin). Landed `/ws` (device-cred auth + live `ActiveDeviceByID`
+  kill switch + `PersonID` binding), inbound push + ack over the socket, the
+  T-09 retention sweeper + graceful WS drain, and **relay-attested** delivery of
+  released drafts (unsigned; the author was OAuth-authed at create+release and
+  the relay is the trust anchor — D-10/D-23). The three-agent quality pass
+  confirmed the trust core sound (signing/identity boundary, `/ws` auth with
+  use-claim separation, replay/freshness, cross-thread injection refused, no
+  oracle, no content logged) and produced the fixes in `4f7073b`. **Key catch —
+  C1 (CRITICAL):** the `/ws` `submit` frame ingested raw signed envelopes,
+  bypassing the outbound approval gate (D-11, arch §5.3) — the exact promise the
+  product exists to keep. It was the design I proposed at subtask 4 ("relay
+  trusts the signed submit; gate is sender-side") and it was wrong: a relay-side
+  gate exists precisely so correctness doesn't depend on every client behaving,
+  and the daemon that would use `submit` doesn't exist yet. **Removed; the
+  daemon-signed path returns in WP-09, gated through a released draft.** Other
+  fixes: **M1** release+deliver folded into ONE transaction (a `sent` draft is by
+  construction delivered — no strandable state; `DeliverDraft`→`deliverInTx`);
+  **H1** the `input-required` flip moved into the shared `ingestTx` (both
+  delivery paths); **H2** revocation now severs live sockets (push re-check +
+  per-frame read re-check + 15 s `severRevoked` reconcile, catching idle and
+  out-of-process CLI revokes — the store can't call the hub, and revoke often
+  runs in another process); **H3** a per-`Notify` `context.Background()` goroutine
+  (no write deadline) leaked on a stalled socket — replaced by one coalescing
+  writer per connection with bounded writes (also killed the O(n²) inbox
+  re-reads); **M2** `envelope.Validate` enforces the T-16 caps on the unsigned
+  draft pipeline. **Pushed to WP-09:** the gated daemon-signed `submit` (with
+  `From.Device` binding, L3). Changed: WP-06 (browser-client signing travels
+  with it, D-23), WP-09 (daemon-signed submit).
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
