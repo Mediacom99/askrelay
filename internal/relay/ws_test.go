@@ -311,6 +311,48 @@ func TestWSSubmitRejected(t *testing.T) {
 	}
 }
 
+func TestSweepOnce(t *testing.T) {
+	s := testServer(t)
+	sender, _, _ := enrollDevice(t, s, "sender@example.com")
+	recipient, _, _ := enrollDevice(t, s, "marco@example.com")
+	msgID := ingestTo(t, s, sender, recipient)
+
+	// Within the hard TTL: the message survives a sweep at "now".
+	s.sweepOnce(time.Now().UTC())
+	if !inboundIDs(t, s, recipient)[msgID] {
+		t.Fatal("message swept while within its hard TTL")
+	}
+
+	// Past the hard TTL: swept regardless of acks.
+	s.sweepOnce(time.Now().UTC().Add(2000 * time.Hour))
+	if inboundIDs(t, s, recipient)[msgID] {
+		t.Fatal("message survived a past-TTL sweep")
+	}
+}
+
+func TestHubCloseAll(t *testing.T) {
+	s := testServer(t)
+	person, _, cred := enrollDevice(t, s, "marco@example.com")
+	srv := httptest.NewServer(s.logRequests(s.mux))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, _, err := dialWS(ctx, srv.URL, cred)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close(websocket.StatusNormalClosure, "bye")
+	if !waitFor(func() bool { return s.hub.count(person) == 1 }) {
+		t.Fatal("socket not registered")
+	}
+
+	s.hub.closeAll()
+	if s.hub.count(person) != 0 {
+		t.Fatalf("hub count = %d after closeAll, want 0", s.hub.count(person))
+	}
+}
+
 func TestWSAuthRejected(t *testing.T) {
 	s := testServer(t)
 	_, device, cred := enrollDevice(t, s, "marco@example.com")

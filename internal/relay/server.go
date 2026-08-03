@@ -64,16 +64,57 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		errc <- nil
 	}()
+	go s.runSweeper(ctx)
 
 	select {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
 		s.log.Info("relay shutting down")
+		s.hub.closeAll() // drop WS conns so their read loops exit before Shutdown waits
 		shutCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutCtx)
 	}
+}
+
+// sweepInterval is how often the retention sweeper runs. Fixed (not a config
+// knob): the T-09 grace/TTL horizons are hours-to-days, so hourly is ample.
+const sweepInterval = time.Hour
+
+// runSweeper deletes expired messages/drafts and prunes replay tombstones (T-09)
+// on a ticker until ctx is cancelled.
+func (s *Server) runSweeper(ctx context.Context) {
+	t := time.NewTicker(sweepInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.sweepOnce(time.Now().UTC())
+		}
+	}
+}
+
+// sweepOnce runs one retention pass, logging counts only (T-18). A failed sweep
+// is logged and retried next tick — never fatal.
+func (s *Server) sweepOnce(now time.Time) {
+	pol := store.RetentionPolicy{AckGrace: s.cfg.AckGrace, HardTTL: s.cfg.HardTTL}
+	fresh := store.Freshness{MaxAge: s.cfg.MaxAge, MaxSkew: s.cfg.MaxSkew}
+	msgs, err := s.store.SweepMessages(pol, now)
+	if err != nil {
+		s.log.Error("sweep messages", "err", err)
+	}
+	drafts, err := s.store.SweepDrafts(pol, now)
+	if err != nil {
+		s.log.Error("sweep drafts", "err", err)
+	}
+	tombs, err := s.store.PruneTombstones(fresh, now)
+	if err != nil {
+		s.log.Error("prune tombstones", "err", err)
+	}
+	s.log.Info("retention sweep", "messages", msgs, "drafts", drafts, "tombstones", tombs)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {

@@ -89,6 +89,21 @@ func (h *hub) remove(person, device string, c *wsConn) {
 	}
 }
 
+// closeAll closes every registered connection — the graceful-shutdown drain, so
+// blocked read loops exit and Run can return. Best-effort; CloseNow does not
+// wait, so the read-loop defers (which also call remove) run after and find the
+// map already reset.
+func (h *hub) closeAll() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, byDevice := range h.conns {
+		for _, c := range byDevice {
+			_ = c.conn.CloseNow()
+		}
+	}
+	h.conns = make(map[string]map[string]*wsConn)
+}
+
 // snapshot copies a person's device→conn map so callers can push without holding
 // the lock during I/O.
 func (h *hub) snapshot(person string) map[string]*wsConn {

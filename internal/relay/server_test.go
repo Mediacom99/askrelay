@@ -50,6 +50,7 @@ func testServer(t *testing.T) *Server {
 	cfg := Config{
 		ListenAddr: "127.0.0.1:0", DBPath: "x", BaseURL: "https://relay.example.com",
 		MaxAge: 24 * time.Hour, MaxSkew: 5 * time.Minute,
+		AckGrace: 72 * time.Hour, HardTTL: 720 * time.Hour,
 	}
 	return NewServer(cfg, st, iss, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
