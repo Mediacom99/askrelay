@@ -86,13 +86,14 @@ func (h *Handler) addSendMessage(s *sdkmcp.Server, person string) {
 		// Auto-release iff an outbound grant covers the thread (a fresh ask
 		// never has one, so it stays pending_review).
 		state := "pending_review"
-		rel, err := h.store.ReleaseReplyViaGrant(draftID, person, now)
+		recipientID, rel, err := h.store.ReleaseReplyViaGrant(draftID, person, now)
 		if err != nil {
 			h.log.Error("send_message: grant release", "err", err)
 			return nil, sendMessageOutput{}, errInternal
 		}
-		if rel != nil {
+		if rel != nil { // grant fired → released AND delivered atomically
 			state = "sent"
+			h.notify(recipientID)
 		}
 		return emptyResult(), sendMessageOutput{DraftID: draftID, ThreadID: threadID, State: state}, nil
 	})
@@ -122,10 +123,12 @@ func (h *Handler) addOutboundVerdicts(s *sdkmcp.Server, person string) {
 		if in.EditedText != nil && len(*in.EditedText) > envelope.MaxBodyBytes {
 			return nil, replyOutput{}, errTooLong
 		}
-		_, err := h.store.ReleaseDraft(person, in.ID, in.EditedText, time.Now().UTC())
+		now := time.Now().UTC()
+		recipientID, _, err := h.store.ReleaseDraft(person, in.ID, in.EditedText, now)
 		if e := mapReplyErr(h, "approve_reply", err); e != nil {
 			return nil, replyOutput{}, e
 		}
+		h.notify(recipientID) // release delivered it atomically
 		return emptyResult(), replyOutput{ID: in.ID, State: "sent"}, nil
 	})
 

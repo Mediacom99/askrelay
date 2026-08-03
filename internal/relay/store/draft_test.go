@@ -51,7 +51,7 @@ func TestCreateAndReleaseDraft(t *testing.T) {
 		t.Fatalf("new draft state = %q, want pending_review", st)
 	}
 
-	rel, err := s.ReleaseDraft(author, draft, nil, now)
+	_, rel, err := s.ReleaseDraft(author, draft, nil, now)
 	if err != nil {
 		t.Fatalf("ReleaseDraft: %v", err)
 	}
@@ -74,14 +74,14 @@ func TestReleaseReplyIllegalAndUnknown(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	_, author, draft := setupDraft(t, s, now)
 
-	if _, err := s.ReleaseDraft(author, draft, nil, now); err != nil {
+	if _, _, err := s.ReleaseDraft(author, draft, nil, now); err != nil {
 		t.Fatalf("first release: %v", err)
 	}
 	// Releasing an already-sent draft is illegal; the gate sentinel survives.
-	if _, err := s.ReleaseDraft(author, draft, nil, now); !errors.Is(err, gate.ErrIllegalTransition) {
+	if _, _, err := s.ReleaseDraft(author, draft, nil, now); !errors.Is(err, gate.ErrIllegalTransition) {
 		t.Errorf("release from sent: err = %v, want wrapped gate.ErrIllegalTransition", err)
 	}
-	if _, err := s.ReleaseDraft(author, "no-such-draft", nil, now); !errors.Is(err, ErrNotFound) {
+	if _, _, err := s.ReleaseDraft(author, "no-such-draft", nil, now); !errors.Is(err, ErrNotFound) {
 		t.Errorf("release unknown: err = %v, want ErrNotFound", err)
 	}
 	if err := s.DiscardDraft(author, "no-such-draft", now); !errors.Is(err, ErrNotFound) {
@@ -101,7 +101,7 @@ func TestDiscardReply(t *testing.T) {
 		t.Errorf("discarded draft state = %q, want discarded", st)
 	}
 	// A discarded draft can't then be released.
-	if _, err := s.ReleaseDraft(author, draft, nil, now); !errors.Is(err, gate.ErrIllegalTransition) {
+	if _, _, err := s.ReleaseDraft(author, draft, nil, now); !errors.Is(err, gate.ErrIllegalTransition) {
 		t.Errorf("release after discard: err = %v, want wrapped gate.ErrIllegalTransition", err)
 	}
 }
@@ -112,7 +112,7 @@ func TestReleaseReplyViaGrant(t *testing.T) {
 	thread, author, draft := setupDraft(t, s, now)
 
 	// No outbound grant: does not fire, draft stays pending_review.
-	rel, err := s.ReleaseReplyViaGrant(draft, author, now)
+	_, rel, err := s.ReleaseReplyViaGrant(draft, author, now)
 	if err != nil {
 		t.Fatalf("ReleaseReplyViaGrant (no grant): %v", err)
 	}
@@ -127,7 +127,7 @@ func TestReleaseReplyViaGrant(t *testing.T) {
 	if err := s.SetThreadGrant(thread, author, gate.Outbound, now); err != nil {
 		t.Fatalf("SetThreadGrant: %v", err)
 	}
-	rel, err = s.ReleaseReplyViaGrant(draft, author, now)
+	_, rel, err = s.ReleaseReplyViaGrant(draft, author, now)
 	if err != nil {
 		t.Fatalf("ReleaseReplyViaGrant (granted): %v", err)
 	}
@@ -143,6 +143,49 @@ func TestReleaseReplyViaGrant(t *testing.T) {
 	}
 	if viaGrant != 1 {
 		t.Errorf("draft via_grant = %d, want 1", viaGrant)
+	}
+}
+
+func TestReleaseDelivers(t *testing.T) {
+	s := newStore(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	// setupDraft: asker asked author; author drafted a reply back to asker on an
+	// already-existing thread — so this exercises the input-required flip on the
+	// existing thread, and that release delivers atomically.
+	thread, author, draft := setupDraft(t, s, now)
+
+	var initiator, recipient string
+	if err := s.db.QueryRow(`SELECT initiator_id, recipient_id FROM threads WHERE id=?`, thread).
+		Scan(&initiator, &recipient); err != nil {
+		t.Fatalf("read thread parties: %v", err)
+	}
+	asker := initiator
+	if asker == author {
+		asker = recipient
+	}
+
+	got, rel, err := s.ReleaseDraft(author, draft, nil, now)
+	if err != nil {
+		t.Fatalf("ReleaseDraft: %v", err)
+	}
+	if rel == nil {
+		t.Fatal("ReleaseDraft returned nil capability")
+	}
+	if got != asker {
+		t.Errorf("release recipient = %q, want the asker %q", got, asker)
+	}
+	if st := draftState(t, s, draft); st != "sent" {
+		t.Errorf("released draft state = %q, want sent", st)
+	}
+
+	// Release delivered in the same transaction: the reply is now the asker's
+	// inbound, on an input-required thread.
+	items, err := s.InboundAwaiting(asker)
+	if err != nil {
+		t.Fatalf("InboundAwaiting: %v", err)
+	}
+	if len(items) != 1 || items[0].ThreadID != thread || items[0].MessageID != draft {
+		t.Fatalf("InboundAwaiting = %+v, want one item for draft %q on thread %q", items, draft, thread)
 	}
 }
 

@@ -18,9 +18,9 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-03 | `internal/relay/store` — SQLite persistence | DONE | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | DONE | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | DONE | WP-04 | T-06 |
-| WP-06 | relay OAuth: embedded AS + client registration | TODO | WP-05 | T-06 |
+| WP-06 | relay OAuth: embedded AS + client registration — **off the critical path (D-23)**, taken with browser-client signing when the browser-connector path is wanted | TODO | WP-05 | T-06 |
 | WP-07 | relay MCP surface (tools + spotlighting) | DONE | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
-| WP-08 | WS hub, delivery, retention sweeper | TODO | WP-03 WP-04 | T-04 T-09 |
+| WP-08 | WS hub, delivery, retention sweeper | IN_PROGRESS | WP-03 WP-04 | T-04 T-09 |
 | WP-09 | daemon core (enroll, queue, stdio MCP) | TODO | WP-01 WP-07 WP-08 WP-11 | T-11 |
 | WP-10 | daemon ↔ Claude Code push (channels + hooks) | TODO | WP-09 | S-01 |
 | WP-11 | `internal/redact` — secret redaction | TODO | — | T-12 |
@@ -36,13 +36,16 @@ Spikes (timeboxed, produce a Learnings entry + possibly decision revisions):
 |---|---|---|
 | S-01 | Channels research preview: does the daemon's `claude/channel` stdio server inject into a live session with acceptable flag/allowlist friction? (arch §6) | before WP-10 |
 | S-02 | Real long-poll ceilings per client for `wait_for_activity` (arch §5.4; the ~28 h Claude Code figure is unverified) | before WP-07 exit |
-| S-03 | MCP 2026-07-28 final release + go-sdk v1.7.0 stable: what changes for us? | ~2026-07-28 |
+| S-03 | MCP 2026-07-28 final release + go-sdk v1.7.0 stable: what changes for us? | ~2026-07-28 — **OVERDUE, unrun as of 2026-08-03**; whether the revision and v1.7.0 stable actually shipped is unverified, so §3's pin stays at go-sdk v1.6.1 / protocol 2025-11-25 until this spike runs |
 | S-04 | Live ChatGPT connector validation on the team's actual plans (write-MCP gating, Plus behavior) | with WP-13 |
 | S-05 | askmesh autopsy + differentiation memo (D-19/C1) | **DONE 2026-07-20** — verdict **PROCEED** (kill criterion 1 does not fire: askmesh was closed-source, unlisted, never launched — invisibility, not rejection). Two findings carried forward: demand is now *unproven not disproven* (no positive signal), and the cold-start/retention hazard is inherited (→ new risk R-11; sharpened kill criterion 3). Differentiation memo: askmesh automates answering (closed Claude-only cloud, no inbound-trust model); askrelay makes consented, safe, cross-vendor asking the product. Full writeup: `docs/research/askmesh-autopsy.md` |
 
 ### Decisions (summary — full entries in §5)
 
-Product D-01..D-18: all APPROVED (see phase2-decision-log.md). Technical
+Product D-01..D-23: all APPROVED (see phase2-decision-log.md; D-19..D-23 were
+added 2026-07-16..07-31 — market verdict, commercialization posture, strategic
+framing, this supervised process, and the local-first/self-talk framing).
+Technical
 T-01..T-15: all **APPROVED** (maintainer, 2026-07-16 — walked through and
 approved one by one). T-16 (whole-artifact size caps) APPROVED 2026-07-22 from
 the WP-01 test pass. T-17 (error-handling convention) + T-18 (logging policy)
@@ -138,10 +141,13 @@ GoReleaser **v2.17.0** (2026-07-04, MIT); golangci-lint **v2.12.2**
 (2026-05-06) via `golangci/golangci-lint-action@v9` (v9.3.0; the pre-scaffold
 @v6 pin was fixed in Phase 4 — see §7).
 
-**MCP protocol:** target revision **2025-11-25** (current released; the
-2026-07-28 revision is an RC due in ~2 weeks that removes sessions/initialize
-and deprecates Roots+Sampling+Logging — it *confirms* our stateless,
-client-initiated-calls design; S-03 handles adoption).
+**MCP protocol:** target revision **2025-11-25** — the revision go-sdk v1.6.1
+speaks, and what WP-07 shipped against. The 2026-07-28 revision removes
+sessions/initialize and deprecates Roots+Sampling+Logging, so it *confirms* our
+stateless, client-initiated-calls design. **Its target date has now passed**
+(the "RC due in ~2 weeks" wording above was written 2026-07-16); whether that
+revision and go-sdk v1.7.0 stable actually shipped is **unverified here** — the
+overdue S-03 owns that check, and the pin does not move before it runs.
 
 ## 4. Dependency graph
 
@@ -161,7 +167,7 @@ as build-order tracks (a WP is eligible when everything left of it is DONE):
 
 ## 5. Decision log
 
-Product decisions **D-01..D-18**: recorded with APPROVED verdicts in
+Product decisions **D-01..D-23**: recorded with APPROVED verdicts in
 [`phase2-decision-log.md`](phase2-decision-log.md); they are imported here by
 reference and bind every WP.
 
@@ -496,7 +502,9 @@ any other ingest path.
 
 ### WP-08 — WS hub, delivery, retention sweeper
 
-**Status:** TODO · **Depends on:** WP-03 WP-04 · **Gated by:** T-04 T-09 ·
+**Status:** IN_PROGRESS (branch `wp-08-delivery`; code complete, three-agent
+quality pass complete and **all findings fixed**, PR open — awaiting merge; see
+*Quality pass* below) · **Depends on:** WP-03 WP-04 · **Gated by:** T-04 T-09 ·
 **Spec:** arch §4.2, §4.5, §6.
 
 **Goal:** `/ws` (device-credential auth): push new-mail/approval events,
@@ -506,22 +514,27 @@ retention sweeper goroutine wired to T-09 knobs.
 **Dependency added:** `github.com/coder/websocket v1.8.15`.
 
 **Delivery obligations (surfaced by WP-07):**
-- **Consume `sent` drafts.** WP-07's `send_message`/`approve_reply` release a
-  draft to `sent` and mint a `*gate.Release`; delivery is what signs the
-  payload and turns it into the recipient's inbound `messages` row
-  (`IngestMessage`). Scan `sent`-but-undelivered drafts (or drain a release
-  queue) — nothing delivers until this exists.
+- **Consume `sent` drafts** — DONE, folded into release. `send_message`/
+  `approve_reply` release a draft to `sent`; that release now **also delivers**
+  in the *same* transaction (`ReleaseDraft`/`ReleaseReplyViaGrant` →
+  `deliverInTx` → the shared `ingestTx`), so a `sent`-but-undelivered state
+  cannot exist. Delivery is **relay-attested** — the released envelope is
+  unsigned; the author was OAuth-authenticated at create+release and the relay
+  is the trust anchor (D-10/D-23). (Delivery does *not* sign; the daemon-signed
+  variant returns with WP-09.)
 - **Set the recipient's thread to `input-required` on delivery.**
   `IngestMessage` only sets `input-required` when it *creates* a thread; a
   delivered ask/reply onto an already-existing thread must transition the
   recipient's side to `input-required`, or `check_inbox`/`InboundAwaiting`
   won't surface it (WP-07 subtask-4 deliberately left existing-thread state to
   the delivery layer).
-- **Browser-client signing** (named at WP-07 kickoff, still open): a browser
-  MCP client (claude.ai/ChatGPT) has no local device key to sign its outbound
-  envelope. Decide the signing model here (e.g. a relay-held browser-device
-  key signed server-side vs. read/approve-only browser clients) — a
-  wire-format/security-posture call that **waits for APPROVED**.
+- **Browser-client signing** — **deferred out of WP-08 by D-23** (2026-07-31).
+  A browser MCP client (claude.ai/ChatGPT) has no local device key to sign its
+  outbound envelope, and the signing model (relay-held browser-device key signed
+  server-side vs. read/approve-only browser clients) is still an open
+  wire-format/security-posture call. D-23 scopes WP-08 to **device-credential
+  delivery only** and takes this together with WP-06 when the browser-connector
+  path is wanted, so it no longer blocks this WP.
 
 **Security notes (WP-02 quality pass):** delivery MUST match
 `gate.Release.Thread()` **and** `gate.Release.ID()` against the message it
@@ -537,6 +550,45 @@ payload-immutability note.
 **Test plan:** kill/reconnect matrix (nothing lost, nothing duplicated beyond
 at-least-once + id dedupe); ack bookkeeping vs sweeper; revocation severs live
 sockets.
+
+**Subtasks (branch `wp-08-delivery`):** (1) relay-attested delivery of released
+drafts, (2) `/ws` endpoint + device-cred auth + connection hub, (3) inbound push
++ ack over `/ws`, (4) daemon signed-submit + identity boundary — **removed by the
+quality pass (C1), deferred to WP-09**, (5) retention sweeper + graceful WS
+drain. Code in `internal/relay/{ws.go,server.go}` + `internal/relay/store/
+{draft.go,message.go}`.
+
+**Quality pass (2026-08-03, three agents — test/review/security):** the trust
+core held (signing/identity boundary, `/ws` auth with use-claim separation,
+replay/freshness with the tombstone tied to the freshness horizon, cross-thread
+injection refused, no auth oracle, no content in logs). Fixes applied on-branch
+(commit `4f7073b`); the adversarial suites are committed
+(`internal/relay/ws_adversarial_test.go`, `internal/relay/store/
+draft_adversarial_test.go`):
+- **C1 (critical) — outbound gate bypass:** the `/ws` `submit` frame ingested
+  raw signed envelopes, skipping the outbound approval gate (D-11, arch §5.3).
+  **Removed**; daemon-signed outbound is deferred to WP-09, gated through a
+  released draft there.
+- **H2 (high) — revocation severs live sockets:** `pushInbox` re-checks
+  `ActiveDeviceByID`, the read loop re-checks per frame, and a 15 s reconcile
+  (`severRevoked`) closes idle / out-of-process-revoked sockets.
+- **H3 (high) — goroutine leak:** one coalescing writer per connection with
+  bounded writes replaces the per-`Notify` `context.Background()` goroutine
+  (also collapses the O(n²) inbox re-reads).
+- **H1 (high) — `input-required` on delivery** moved into the shared `ingestTx`,
+  so both delivery paths flip an existing thread to the recipient's turn.
+- **M1 (med) — atomic release+deliver** (folded — see the consume-`sent`-drafts
+  obligation) and **M2 (med) — T-16 caps on the unsigned draft pipeline**
+  (`envelope.Validate` in `CreateDraft`/`ReleaseDraft`).
+- Lower-tier: `dev.PersonID == person` assert on `/ws` connect (L2),
+  zero-value+error on the release error path (L1), honest "`closeAll` is abrupt,
+  not a drain" wording (L6). L5 (nil-conn `hub.add`) left as unreachable.
+
+**D-23 self-talk note:** the self-talk on-ramp needs **two distinct enrolled
+person identities** owned by the same operator, not one identity talking to
+itself — `threads` carries `CHECK (initiator_id <> recipient_id)`
+(`store/migrations/0001_init.sql`), pinned by `TestSelfThreadBlockedAtSchema`.
+Nothing to change; worth stating because D-23 makes self-talk the first-user path.
 
 ### WP-09 — daemon core
 

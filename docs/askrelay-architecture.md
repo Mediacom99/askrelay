@@ -210,7 +210,7 @@ server (mcp.md). The relay embeds the minimum honest implementation:
 |---|---|
 | `POST /mcp` | Streamable HTTP MCP endpoint, **stateless** (D-06; go-sdk stateless mode; ready for the sessionless 2026-07-28 revision) |
 | `/.well-known/oauth-protected-resource` | RFC 9728 PRM |
-| `/oauth/*` | embedded AS: authorize, token, register (DCR), JWKS |
+| `/oauth/*` | embedded AS: authorize, token, register (DCR), JWKS — **WP-06, not built yet**; off the local-first critical path (D-23). Every other route in this table is mounted in `internal/relay/server.go` today. |
 | `GET /ws` | daemon WebSocket (device-credential auth): delivery push, approval push, outbound submit |
 | `POST /enroll/{token}` | device enrollment (§4.3) |
 | `GET /healthz` | liveness + version |

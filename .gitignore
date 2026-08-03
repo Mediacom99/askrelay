@@ -34,6 +34,8 @@ Thumbs.db
 *.log
 
 # Session-local material (never tracked)
+# /docs/.local/ holds local, uncommitted renders and vendored view assets
+/docs/.local/
 /prompts/
 .claude/memory/
 .claude/settings.local.json

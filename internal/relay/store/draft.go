@@ -21,6 +21,11 @@ func (s *Store) CreateDraft(threadID, authorID string, e envelope.Envelope, now 
 	if _, err := uuid.Parse(e.ID); err != nil {
 		return "", fmt.Errorf("store: create draft: bad envelope id: %w", err)
 	}
+	// T-16 caps: the draft pipeline never signs, so it doesn't inherit the
+	// Sign/Verify cap check — enforce it here so no over-cap draft is stored.
+	if err := envelope.Validate(e); err != nil {
+		return "", fmt.Errorf("store: create draft: %w", err)
+	}
 	blob, err := json.Marshal(e)
 	if err != nil {
 		return "", fmt.Errorf("store: marshal draft: %w", err)
@@ -66,13 +71,14 @@ func (s *Store) CreateDraft(threadID, authorID string, e envelope.Envelope, now 
 
 // ReleaseDraft applies the author's release to their pending draft, optionally
 // replacing the body with editedText first — a FRESH envelope, never mutating
-// the one handed to the gate (WP-02) — all in one transaction. Author-gated:
-// a draft that isn't the caller's (or is absent) is ErrNotFound (no oracle).
-// No state parameter (F3). Returns the *gate.Release for WP-08 to sign +
-// deliver, matching Thread()+ID().
-func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now time.Time) (*gate.Release, error) {
-	var rel *gate.Release
-	err := s.writeTx(func(tx *sql.Tx) error {
+// the one handed to the gate (WP-02) — AND delivers it, all in ONE transaction:
+// release (pending_review→sent) and delivery to the recipient commit atomically,
+// so a released draft is by definition a delivered message (no strandable
+// sent-but-undelivered state). Author-gated: a draft that isn't the caller's (or
+// is absent) is ErrNotFound (no oracle). No state parameter (F3). Returns the
+// recipient person id (for the delivery push) and the minted *gate.Release.
+func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now time.Time) (recipientID string, rel *gate.Release, err error) {
+	err = s.writeTx(func(tx *sql.Tx) error {
 		thread, author, cur, payload, err := loadDraft(tx, draftID)
 		if err != nil {
 			return err
@@ -82,6 +88,11 @@ func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now t
 		}
 		if editedText != nil {
 			payload.Body = envelope.Message{Role: payload.Body.Role, Parts: []envelope.Part{{Type: "text", Text: *editedText}}}
+			// T-16 caps on the edited payload (the draft pipeline never signs, so
+			// it doesn't inherit Sign/Verify's cap check — enforce it here).
+			if verr := envelope.Validate(payload); verr != nil {
+				return fmt.Errorf("store: release draft: %w", verr)
+			}
 			blob, merr := json.Marshal(payload)
 			if merr != nil {
 				return fmt.Errorf("store: marshal edited draft: %w", merr)
@@ -101,13 +112,35 @@ func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now t
 		if err := setDraftDecided(tx, draftID, next, false, now); err != nil {
 			return err
 		}
-		rel = r
+		rid, err := deliverInTx(tx, payload, author, now)
+		if err != nil {
+			return err
+		}
+		recipientID, rel = rid, r
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return "", nil, err // T-17: zero value + error, never both
 	}
-	return rel, nil
+	return recipientID, rel, nil
+}
+
+// deliverInTx ingests a released draft's (unsigned) envelope as the recipient's
+// inbound message, in the caller's transaction — relay-attested: no device
+// signature. The author was OAuth-authenticated when the draft was created and
+// released, and on a self-hosted relay the relay is the trust anchor (D-10/D-23),
+// so the recipient trusts that attestation. ingestTx flips the thread to
+// input-required (the recipient's turn). Returns the recipient person id.
+//
+// ponytail: relay-attested, no signature — correct while the relay is self-hosted
+// and trusted and daemon-signed delivery (WP-09) does not yet exist. Upgrade path:
+// the signed path returns with the daemon, gated through this same released-draft.
+func deliverInTx(tx *sql.Tx, payload envelope.Envelope, author string, now time.Time) (string, error) {
+	payload.SentAt = now // "sent" = when released, not when drafted
+	if err := ingestTx(tx, payload, author, now); err != nil {
+		return "", err
+	}
+	return payload.To, nil
 }
 
 // DiscardDraft rejects the author's pending draft (→ discarded); mints no
@@ -133,13 +166,13 @@ func (s *Store) DiscardDraft(personID, draftID string, now time.Time) error {
 	})
 }
 
-// ReleaseReplyViaGrant auto-releases IF granter holds an active outbound grant
-// on the thread; a nil *Release with nil error means "no grant — ask the
-// human". The minted Release carries ViaGrant()==true and the draft row is
-// marked via_grant.
-func (s *Store) ReleaseReplyViaGrant(draftID, granterID string, now time.Time) (*gate.Release, error) {
-	var rel *gate.Release
-	err := s.writeTx(func(tx *sql.Tx) error {
+// ReleaseReplyViaGrant auto-releases AND delivers IF granter holds an active
+// outbound grant on the thread; a nil *Release with nil error means "no grant —
+// ask the human" (and recipientID is then ""). When it fires, release and
+// delivery commit atomically in one transaction (see ReleaseDraft). The minted
+// Release carries ViaGrant()==true and the draft row is marked via_grant.
+func (s *Store) ReleaseReplyViaGrant(draftID, granterID string, now time.Time) (recipientID string, rel *gate.Release, err error) {
+	err = s.writeTx(func(tx *sql.Tx) error {
 		thread, author, cur, payload, err := loadDraft(tx, draftID)
 		if err != nil {
 			return err
@@ -170,13 +203,17 @@ func (s *Store) ReleaseReplyViaGrant(draftID, granterID string, now time.Time) (
 		if err := setDraftDecided(tx, draftID, next, true, now); err != nil {
 			return err
 		}
-		rel = r
+		rid, err := deliverInTx(tx, payload, author, now)
+		if err != nil {
+			return err
+		}
+		recipientID, rel = rid, r
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return "", nil, err // T-17: zero value + error, never both
 	}
-	return rel, nil
+	return recipientID, rel, nil
 }
 
 // loadDraft reads a draft's thread, author, authoritative state, and decoded

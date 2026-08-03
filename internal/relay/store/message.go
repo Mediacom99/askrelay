@@ -60,40 +60,55 @@ func (s *Store) IngestMessage(e envelope.Envelope, senderID string, fresh Freshn
 	if e.SentAt.Before(now.Add(-fresh.MaxAge)) || e.SentAt.After(now.Add(fresh.MaxSkew)) {
 		return ErrNotFresh
 	}
+	return s.writeTx(func(tx *sql.Tx) error {
+		return ingestTx(tx, e, senderID, now)
+	})
+}
 
+// ingestTx writes a verified/attested envelope inside an existing transaction:
+// dedup, thread ensure, message row, replay tombstone, delivery fan-out. Shared
+// by IngestMessage (the signed inbound path) and DeliverDraft (relay-attested
+// delivery); the caller owns the tx and any freshness/id pre-checks.
+func ingestTx(tx *sql.Tx, e envelope.Envelope, senderID string, now time.Time) error {
+	seen, err := tombstoneSeen(tx, e.ID)
+	if err != nil {
+		return err
+	}
+	if seen {
+		return ErrReplay
+	}
+	if err := ensureThread(tx, e, senderID, now); err != nil {
+		return err
+	}
 	// Canonical form = the re-marshaled decoded struct (arch §4.1 invariant),
 	// sig included so the recipient can re-Verify. Never the raw received bytes.
 	blob, err := json.Marshal(e)
 	if err != nil {
 		return fmt.Errorf("store: marshal envelope: %w", err)
 	}
-
-	return s.writeTx(func(tx *sql.Tx) error {
-		seen, err := tombstoneSeen(tx, e.ID)
-		if err != nil {
-			return err
-		}
-		if seen {
-			return ErrReplay
-		}
-		if err := ensureThread(tx, e, senderID, now); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(
-			`INSERT INTO messages (id, thread_id, sender_id, envelope, sent_at, received_at, via_grant)
-			 VALUES (?, ?, ?, ?, ?, ?, 0)`,
-			e.ID, e.Thread, senderID, blob, e.SentAt.Unix(), now.Unix()); err != nil {
-			return fmt.Errorf("store: insert message: %w", err)
-		}
-		// The tombstone records the SIGNED sent_at (not the relay clock) so it
-		// can be pruned against the same freshness horizon a replay is checked
-		// against (retention.go PruneTombstones).
-		if _, err := tx.Exec(
-			`INSERT INTO message_tombstones (id, sent_at) VALUES (?, ?)`, e.ID, e.SentAt.Unix()); err != nil {
-			return fmt.Errorf("store: insert tombstone: %w", err)
-		}
-		return fanOutDeliveries(tx, e.ID, e.To)
-	})
+	if _, err := tx.Exec(
+		`INSERT INTO messages (id, thread_id, sender_id, envelope, sent_at, received_at, via_grant)
+		 VALUES (?, ?, ?, ?, ?, ?, 0)`,
+		e.ID, e.Thread, senderID, blob, e.SentAt.Unix(), now.Unix()); err != nil {
+		return fmt.Errorf("store: insert message: %w", err)
+	}
+	// The tombstone records the SIGNED sent_at (not the relay clock) so it
+	// can be pruned against the same freshness horizon a replay is checked
+	// against (retention.go PruneTombstones).
+	if _, err := tx.Exec(
+		`INSERT INTO message_tombstones (id, sent_at) VALUES (?, ?)`, e.ID, e.SentAt.Unix()); err != nil {
+		return fmt.Errorf("store: insert tombstone: %w", err)
+	}
+	// A delivered message is the recipient's turn — flip the thread to
+	// input-required for BOTH a new thread (created above) and an existing one
+	// (ensureThread does not transition existing threads). Without this a reply
+	// onto an existing thread never surfaces to InboundAwaiting/check_inbox.
+	if _, err := tx.Exec(
+		`UPDATE threads SET state=?, updated_at=? WHERE id=?`,
+		string(a2a.StateInputRequired), now.Unix(), e.Thread); err != nil {
+		return fmt.Errorf("store: set input-required: %w", err)
+	}
+	return fanOutDeliveries(tx, e.ID, e.To)
 }
 
 // tombstoneSeen reports whether id already has a replay tombstone — the

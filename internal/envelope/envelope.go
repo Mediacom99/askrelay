@@ -192,3 +192,13 @@ func check(e Envelope) ([]byte, error) {
 	}
 	return canon, nil
 }
+
+// Validate enforces the T-16 caps (version, part count, body-text and
+// whole-wire byte sizes) on an envelope without signing — the same checks
+// Sign/Verify run, exposed for the unsigned draft pipeline so it inherits the
+// caps instead of re-implementing them. Returns ErrBadVersion, ErrTooManyParts,
+// or ErrTooLarge; nil if within all caps.
+func Validate(e Envelope) error {
+	_, err := check(e)
+	return err
+}
