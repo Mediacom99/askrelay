@@ -187,52 +187,6 @@ func TestWSLivePush(t *testing.T) {
 	readMessage(ctx, t, c, msgID)
 }
 
-// enrollSigningDevice is enrollDevice that also returns the device private key,
-// so the test can sign envelopes as that device.
-func enrollSigningDevice(t *testing.T, s *Server, email string) (personID, deviceID, cred string, priv ed25519.PrivateKey) {
-	t.Helper()
-	now := time.Now().UTC()
-	tok, err := s.store.CreateInvite(email, time.Hour, now)
-	if err != nil {
-		t.Fatalf("CreateInvite: %v", err)
-	}
-	pub, p, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatalf("GenerateKey: %v", err)
-	}
-	person, device, err := s.store.Enroll(tok, pub, "test", now)
-	if err != nil {
-		t.Fatalf("Enroll: %v", err)
-	}
-	cred, err = s.issuer.MintDeviceCredential(person.ID, device.ID, now)
-	if err != nil {
-		t.Fatalf("MintDeviceCredential: %v", err)
-	}
-	return person.ID, device.ID, cred, p
-}
-
-func signedEnvelope(t *testing.T, from, to, thread string, priv ed25519.PrivateKey) envelope.Envelope {
-	t.Helper()
-	e := envelope.New(envelope.Party{Person: from}, to, thread, a2a.StateSubmitted, false,
-		envelope.Message{Role: "user", Parts: []envelope.Part{{Type: "text", Text: "hi"}}})
-	if err := envelope.Sign(&e, priv); err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	return e
-}
-
-func submitEnvelope(ctx context.Context, t *testing.T, c *websocket.Conn, e envelope.Envelope) {
-	t.Helper()
-	raw, err := json.Marshal(e)
-	if err != nil {
-		t.Fatalf("marshal envelope: %v", err)
-	}
-	b, _ := json.Marshal(wsFrame{Type: "submit", Envelope: raw})
-	if err := c.Write(ctx, websocket.MessageText, b); err != nil {
-		t.Fatalf("write submit: %v", err)
-	}
-}
-
 // inboundIDs is the set of message ids currently awaiting a person.
 func inboundIDs(t *testing.T, s *Server, person string) map[string]bool {
 	t.Helper()
@@ -245,70 +199,6 @@ func inboundIDs(t *testing.T, s *Server, person string) map[string]bool {
 		ids[it.MessageID] = true
 	}
 	return ids
-}
-
-func TestWSSubmit(t *testing.T) {
-	s := testServer(t)
-	sender, _, cred, priv := enrollSigningDevice(t, s, "sender@example.com")
-	recipient, _, _ := enrollDevice(t, s, "marco@example.com")
-	srv := httptest.NewServer(s.logRequests(s.mux))
-	defer srv.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	c, _, err := dialWS(ctx, srv.URL, cred)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer c.Close(websocket.StatusNormalClosure, "bye")
-
-	e := signedEnvelope(t, sender, recipient, "", priv)
-	submitEnvelope(ctx, t, c, e)
-	if !waitFor(func() bool { return inboundIDs(t, s, recipient)[e.ID] }) {
-		t.Fatalf("submitted message not ingested")
-	}
-}
-
-func TestWSSubmitRejected(t *testing.T) {
-	s := testServer(t)
-	sender, _, cred, priv := enrollSigningDevice(t, s, "sender@example.com")
-	recipient, _, _ := enrollDevice(t, s, "marco@example.com")
-	other, _, _ := enrollDevice(t, s, "eve@example.com")
-	srv := httptest.NewServer(s.logRequests(s.mux))
-	defer srv.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	c, _, err := dialWS(ctx, srv.URL, cred)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	defer c.Close(websocket.StatusNormalClosure, "bye")
-
-	// (a) signed by a key that is not this device's → Verify fails.
-	_, wrongPriv, _ := ed25519.GenerateKey(rand.Reader)
-	bad1 := signedEnvelope(t, sender, recipient, "", wrongPriv)
-	submitEnvelope(ctx, t, c, bad1)
-
-	// (b) correctly signed by this device but claims a different From.Person →
-	// the binding check rejects it.
-	bad2 := signedEnvelope(t, other, recipient, "", priv)
-	submitEnvelope(ctx, t, c, bad2)
-
-	// Sentinel: a valid submit that MUST land, proving the loop advanced past
-	// both bad frames (each on its own thread, so a leak would show up).
-	good := signedEnvelope(t, sender, recipient, "", priv)
-	submitEnvelope(ctx, t, c, good)
-	if !waitFor(func() bool { return inboundIDs(t, s, recipient)[good.ID] }) {
-		t.Fatalf("sentinel not ingested")
-	}
-	ids := inboundIDs(t, s, recipient)
-	if ids[bad1.ID] {
-		t.Error("wrong-key signature was ingested")
-	}
-	if ids[bad2.ID] {
-		t.Error("From.Person mismatch was ingested")
-	}
 }
 
 func TestSweepOnce(t *testing.T) {

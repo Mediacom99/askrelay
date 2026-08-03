@@ -99,6 +99,15 @@ func ingestTx(tx *sql.Tx, e envelope.Envelope, senderID string, now time.Time) e
 		`INSERT INTO message_tombstones (id, sent_at) VALUES (?, ?)`, e.ID, e.SentAt.Unix()); err != nil {
 		return fmt.Errorf("store: insert tombstone: %w", err)
 	}
+	// A delivered message is the recipient's turn — flip the thread to
+	// input-required for BOTH a new thread (created above) and an existing one
+	// (ensureThread does not transition existing threads). Without this a reply
+	// onto an existing thread never surfaces to InboundAwaiting/check_inbox.
+	if _, err := tx.Exec(
+		`UPDATE threads SET state=?, updated_at=? WHERE id=?`,
+		string(a2a.StateInputRequired), now.Unix(), e.Thread); err != nil {
+		return fmt.Errorf("store: set input-required: %w", err)
+	}
 	return fanOutDeliveries(tx, e.ID, e.To)
 }
 

@@ -10,17 +10,25 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-
-	"github.com/Mediacom99/askrelay/internal/envelope"
-	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
 
-// maxWSFrame bounds an inbound /ws frame (acks are tiny; sized ahead for the
-// outbound-envelope submit in subtask 4).
-const maxWSFrame = 128 << 10
+const (
+	// maxWSFrame bounds an inbound /ws frame (acks are tiny).
+	maxWSFrame = 128 << 10
+	// writeTimeout bounds a single push write, so a stalled/dead socket fails
+	// the write instead of blocking a goroutine forever (a full send buffer on a
+	// sleeping laptop / dropped NAT session has nothing to cancel otherwise).
+	writeTimeout = 10 * time.Second
+	// revokeCheckInterval bounds how long a revoked device's idle socket can
+	// linger — the reconcile loop severs it (also catches out-of-process revokes
+	// via the `device revoke` CLI, which the running relay never sees directly).
+	revokeCheckInterval = 15 * time.Second
+)
 
 // wsFrame is the /ws wire form (JSON text). Server→daemon: type "message" with
 // the delivery fields. Daemon→server: type "ack" with the message id.
+// (Daemon-signed outbound submit is deferred to WP-09, where it is gated through
+// a released draft rather than ingested raw.)
 type wsFrame struct {
 	Type     string          `json:"type"`
 	ID       string          `json:"id,omitempty"`
@@ -29,11 +37,11 @@ type wsFrame struct {
 	Envelope json.RawMessage `json:"envelope,omitempty"`
 }
 
-// wsConn serializes writes to one socket — coder/websocket allows only one write
-// in progress at a time, and the connect-drain and live pushes race otherwise.
+// wsConn is one live socket plus its coalescing wake channel. All writes flow
+// through the single per-connection writerLoop, so no write mutex is needed.
 type wsConn struct {
-	conn    *websocket.Conn
-	writeMu sync.Mutex
+	conn *websocket.Conn
+	wake chan struct{} // cap 1; a non-blocking send coalesces overlapping pushes
 }
 
 func (c *wsConn) writeFrame(ctx context.Context, f wsFrame) error {
@@ -41,8 +49,6 @@ func (c *wsConn) writeFrame(ctx context.Context, f wsFrame) error {
 	if err != nil {
 		return err
 	}
-	c.writeMu.Lock()
-	defer c.writeMu.Unlock()
 	return c.conn.Write(ctx, websocket.MessageText, b)
 }
 
@@ -89,10 +95,9 @@ func (h *hub) remove(person, device string, c *wsConn) {
 	}
 }
 
-// closeAll closes every registered connection — the graceful-shutdown drain, so
-// blocked read loops exit and Run can return. Best-effort; CloseNow does not
-// wait, so the read-loop defers (which also call remove) run after and find the
-// map already reset.
+// closeAll closes every registered connection so the read loops exit and Run can
+// return. Best-effort and abrupt (CloseNow, no close handshake) — hijacked WS
+// conns aren't tracked by http.Server's graceful shutdown, so this is the drain.
 func (h *hub) closeAll() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -114,11 +119,24 @@ func (h *hub) snapshot(person string) map[string]*wsConn {
 	return out
 }
 
+// devices copies every live (deviceID→conn) across all persons — device ids are
+// globally unique. Used by the revocation reconcile.
+func (h *hub) devices() map[string]*wsConn {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := map[string]*wsConn{}
+	for _, byDevice := range h.conns {
+		maps.Copy(out, byDevice)
+	}
+	return out
+}
+
 // handleWS upgrades a daemon connection after authenticating its device
-// credential (a distinct long-lived token, T-06) and re-checking the device is
-// live (ActiveDeviceByID — the revocation kill switch, arch §4.3). It registers
-// the socket, resends any unacked inbox, then loops reading acks. Outbound
-// submit (subtask 4) extends the read loop.
+// credential (a distinct long-lived token, T-06), re-checking the device is live
+// (ActiveDeviceByID — the revocation kill switch, arch §4.3), and confirming the
+// device belongs to the credential's person. It registers the socket, starts a
+// single writer goroutine that pushes inbox mail, then loops reading acks —
+// re-checking revocation on every frame.
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	tok, ok := bearerToken(r)
 	if !ok {
@@ -131,8 +149,18 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	if _, err := s.store.ActiveDeviceByID(device); err != nil {
+	dev, err := s.store.ActiveDeviceByID(device)
+	if err != nil {
 		s.log.Warn("ws: device not active", "device_id", device) // revoked/unknown — no oracle to caller
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	if dev.PersonID != person {
+		// Defense in depth: the credential's person must own the device. Today
+		// MintDeviceCredential only ever pairs a device with its own person, so
+		// this can't trigger — but the identity boundary asserts it locally
+		// rather than trusting a cross-file invariant.
+		s.log.Warn("ws: credential/device person mismatch", "device_id", device)
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -143,21 +171,30 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.SetReadLimit(maxWSFrame)
-	wc := &wsConn{conn: c}
+	wc := &wsConn{conn: c, wake: make(chan struct{}, 1)}
 	s.hub.add(person, device, wc)
 	s.log.Info("ws: connected", "person_id", person, "device_id", device)
+
+	connCtx, cancel := context.WithCancel(r.Context())
 	defer func() {
+		cancel() // stop the writer goroutine
 		s.hub.remove(person, device, wc)
 		_ = c.CloseNow() // best-effort on teardown
 		s.log.Info("ws: disconnected", "person_id", person, "device_id", device)
 	}()
 
-	ctx := r.Context()
-	s.pushInbox(ctx, device, wc) // resend anything unacked on (re)connect
+	go s.writerLoop(connCtx, device, wc)
+	s.wake(wc) // resend anything unacked on (re)connect
 
 	for {
-		_, data, err := c.Read(ctx)
+		_, data, err := c.Read(connCtx)
 		if err != nil {
+			return
+		}
+		// Re-check revocation on every inbound frame: a device revoked
+		// mid-session (out of band) is severed here too, not only by push/reconcile.
+		if _, err := s.store.ActiveDeviceByID(device); err != nil {
+			s.log.Warn("ws: device revoked mid-session", "device_id", device)
 			return
 		}
 		var f wsFrame
@@ -172,70 +209,60 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 					s.log.Warn("ws: ack", "err", err, "message_id", f.ID)
 				}
 			}
-		case "submit":
-			s.handleSubmit(person, device, f.Envelope)
 		default:
 			s.log.Warn("ws: unknown frame type", "type", f.Type)
 		}
 	}
 }
 
-// handleSubmit ingests a signed envelope a daemon submitted over /ws. Security
-// boundary (WP-03/07): the envelope must be signed by THIS authenticated device
-// (Verify against its pubkey; the live ActiveDeviceByID re-check doubles as the
-// mid-session revocation kill switch) AND claim a From.Person equal to the
-// socket's authenticated person. The senderID handed to the store is that
-// authenticated person, never the envelope's self-assertion. Refusals are logged
-// (T-18, ids/shapes only) and dropped; the durable daemon queue re-submits.
-func (s *Server) handleSubmit(person, device string, raw json.RawMessage) {
-	now := time.Now().UTC()
-	e, err := envelope.Decode(raw)
-	if err != nil {
-		s.log.Warn("ws: submit decode", "err", err, "device_id", device)
-		return
+// writerLoop is the single writer for one connection: it drains the inbox each
+// time it is woken, until the connection context is cancelled. One goroutine per
+// connection (never per push), so a stalled socket can't stack goroutines.
+func (s *Server) writerLoop(ctx context.Context, device string, c *wsConn) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c.wake:
+			s.drainInbox(ctx, device, c)
+		}
 	}
-	dev, err := s.store.ActiveDeviceByID(device) // live kill switch + pubkey source
-	if err != nil {
-		s.log.Warn("ws: submit device inactive", "device_id", device)
-		return
-	}
-	if err := envelope.Verify(e, dev.PubKey); err != nil {
-		s.log.Warn("ws: submit bad signature", "err", err, "device_id", device)
-		return
-	}
-	if e.From.Person != person {
-		s.log.Warn("ws: submit signer mismatch", "device_id", device) // signed a claim it can't make
-		return
-	}
-	fresh := store.Freshness{MaxAge: s.cfg.MaxAge, MaxSkew: s.cfg.MaxSkew}
-	if err := s.store.IngestMessage(e, person, fresh, now); err != nil {
-		s.log.Warn("ws: submit ingest", "err", err, "message_id", e.ID)
-		return
-	}
-	s.Notify(e.To)
-	s.log.Info("ws: submitted", "person_id", person, "device_id", device,
-		"message_id", e.ID, "thread_id", e.Thread)
 }
 
-// pushInbox drains a device's unacked inbox to its socket, marking each
-// delivered. Best-effort: a write error ends the drain (the socket is dying; the
-// durable inbox re-sends on the next connect).
-//
-// ponytail: re-sends all unacked (Inbox filters on acked_at, not delivered), so
-// a live notify can resend an already-delivered-but-unacked message. Duplicates
-// are safe (idempotent ack, daemon dedups on id) and the backlog is ~0 under
-// prompt acks. Add an undelivered-only read if dup churn ever matters.
-func (s *Server) pushInbox(ctx context.Context, device string, c *wsConn) {
+// wake signals c's writer to drain, coalescing: if a drain is already pending the
+// signal is dropped (that pending drain will read the newly-arrived mail too).
+func (s *Server) wake(c *wsConn) {
+	select {
+	case c.wake <- struct{}{}:
+	default:
+	}
+}
+
+// drainInbox sends a device's unacked inbox to its socket, marking each
+// delivered. It first re-checks the device is live (severing a revoked device —
+// the push-side kill switch) and bounds each write so a stalled socket fails
+// fast and is closed rather than leaking a blocked goroutine.
+func (s *Server) drainInbox(ctx context.Context, device string, c *wsConn) {
+	if _, err := s.store.ActiveDeviceByID(device); err != nil {
+		s.log.Warn("ws: device revoked, closing socket", "device_id", device)
+		_ = c.conn.CloseNow() // read loop exits and deregisters
+		return
+	}
 	items, err := s.store.Inbox(device)
 	if err != nil {
 		s.log.Error("ws: read inbox", "err", err, "device_id", device)
 		return
 	}
 	for _, it := range items {
-		if err := c.writeFrame(ctx, wsFrame{
+		wctx, wcancel := context.WithTimeout(ctx, writeTimeout)
+		werr := c.writeFrame(wctx, wsFrame{
 			Type: "message", ID: it.ID, ThreadID: it.ThreadID,
 			SenderID: it.SenderID, Envelope: it.Envelope,
-		}); err != nil {
+		})
+		wcancel()
+		if werr != nil {
+			s.log.Warn("ws: push write failed, closing socket", "err", werr, "device_id", device)
+			_ = c.conn.CloseNow() // dead/stalled socket → sever
 			return
 		}
 		if err := s.store.MarkDelivered(it.ID, device, time.Now().UTC()); err != nil {
@@ -244,13 +271,41 @@ func (s *Server) pushInbox(ctx context.Context, device string, c *wsConn) {
 	}
 }
 
-// Notify pushes pending mail to all of a person's connected devices — the
+// Notify wakes every connected device of a person to push pending mail — the
 // delivery push after a message is ingested for them (satisfies mcp.Notifier).
-// Fire-and-forget: a missing or slow socket never blocks the caller; the durable
-// inbox is the backstop.
+// Non-blocking: it only signals; the per-connection writer does the work, so a
+// missing or slow socket never blocks the caller and never spawns work.
 func (s *Server) Notify(personID string) {
-	for device, c := range s.hub.snapshot(personID) {
-		go s.pushInbox(context.Background(), device, c)
+	for _, c := range s.hub.snapshot(personID) {
+		s.wake(c)
+	}
+}
+
+// reconcileRevocations periodically severs sockets whose device is no longer
+// active — bounding how long a revoked (or out-of-process-revoked) device's idle
+// socket survives, until ctx is cancelled.
+func (s *Server) reconcileRevocations(ctx context.Context) {
+	t := time.NewTicker(revokeCheckInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.severRevoked()
+		}
+	}
+}
+
+// severRevoked closes every live socket whose device is no longer active. It
+// catches idle sockets and out-of-process revokes (the `device revoke` CLI
+// writes the DB directly, so the relay never sees the call).
+func (s *Server) severRevoked() {
+	for device, c := range s.hub.devices() {
+		if _, err := s.store.ActiveDeviceByID(device); err != nil {
+			s.log.Warn("ws: severing revoked device", "device_id", device)
+			_ = c.conn.CloseNow() // read loop exits and deregisters
+		}
 	}
 }
 

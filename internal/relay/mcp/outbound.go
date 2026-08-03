@@ -86,18 +86,13 @@ func (h *Handler) addSendMessage(s *sdkmcp.Server, person string) {
 		// Auto-release iff an outbound grant covers the thread (a fresh ask
 		// never has one, so it stays pending_review).
 		state := "pending_review"
-		rel, err := h.store.ReleaseReplyViaGrant(draftID, person, now)
+		recipientID, rel, err := h.store.ReleaseReplyViaGrant(draftID, person, now)
 		if err != nil {
 			h.log.Error("send_message: grant release", "err", err)
 			return nil, sendMessageOutput{}, errInternal
 		}
-		if rel != nil {
+		if rel != nil { // grant fired → released AND delivered atomically
 			state = "sent"
-			recipientID, err := h.store.DeliverDraft(draftID, now)
-			if err != nil {
-				h.log.Error("send_message: deliver", "err", err)
-				return nil, sendMessageOutput{}, errInternal
-			}
 			h.notify(recipientID)
 		}
 		return emptyResult(), sendMessageOutput{DraftID: draftID, ThreadID: threadID, State: state}, nil
@@ -129,16 +124,11 @@ func (h *Handler) addOutboundVerdicts(s *sdkmcp.Server, person string) {
 			return nil, replyOutput{}, errTooLong
 		}
 		now := time.Now().UTC()
-		_, err := h.store.ReleaseDraft(person, in.ID, in.EditedText, now)
+		recipientID, _, err := h.store.ReleaseDraft(person, in.ID, in.EditedText, now)
 		if e := mapReplyErr(h, "approve_reply", err); e != nil {
 			return nil, replyOutput{}, e
 		}
-		recipientID, err := h.store.DeliverDraft(in.ID, now)
-		if err != nil {
-			h.log.Error("approve_reply: deliver", "err", err)
-			return nil, replyOutput{}, errInternal
-		}
-		h.notify(recipientID)
+		h.notify(recipientID) // release delivered it atomically
 		return emptyResult(), replyOutput{ID: in.ID, State: "sent"}, nil
 	})
 

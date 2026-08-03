@@ -145,7 +145,7 @@ func TestSweepDrafts(t *testing.T) {
 	s := newStore(t)
 	t0 := time.Unix(1_700_000_000, 0).UTC()
 	_, author, draft := setupDraft(t, s, t0)
-	if _, err := s.ReleaseDraft(author, draft, nil, t0); err != nil {
+	if _, _, err := s.ReleaseDraft(author, draft, nil, t0); err != nil {
 		t.Fatalf("ReleaseDraft: %v", err)
 	}
 	// A live pending_review draft alongside it must never be swept.

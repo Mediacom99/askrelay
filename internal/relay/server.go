@@ -65,6 +65,7 @@ func (s *Server) Run(ctx context.Context) error {
 		errc <- nil
 	}()
 	go s.runSweeper(ctx)
+	go s.reconcileRevocations(ctx)
 
 	select {
 	case err := <-errc:

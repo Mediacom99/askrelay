@@ -139,7 +139,7 @@ func TestIngestNotFresh(t *testing.T) {
 	}
 }
 
-func TestIngestExistingThreadNoTransition(t *testing.T) {
+func TestIngestExistingThreadSetsInputRequired(t *testing.T) {
 	s := newStore(t)
 	now := time.Unix(1_700_000_000, 0).UTC()
 	sender, _ := enrollPerson(t, s, "s@example.com", now)
@@ -149,11 +149,14 @@ func TestIngestExistingThreadNoTransition(t *testing.T) {
 	if err := s.IngestMessage(mkEnvelope(thread, sender, recip, now), sender, testFresh, now); err != nil {
 		t.Fatalf("first ingest: %v", err)
 	}
-	// Simulate a gate-driven transition (subtask 5's job) to a distinct state.
+	// The recipient acts on it, driving the thread to a non-input-required state.
 	if _, err := s.db.Exec(`UPDATE threads SET state = 'working' WHERE id = ?`, thread); err != nil {
 		t.Fatalf("set thread working: %v", err)
 	}
-	// A second message on the same thread must NOT touch its state.
+	// A delivered message onto the existing thread is the recipient's turn again:
+	// ingest flips it back to input-required (WP-08 finding H1) so check_inbox /
+	// InboundAwaiting surface it — otherwise a follow-up onto a live thread would
+	// be invisible.
 	if err := s.IngestMessage(mkEnvelope(thread, sender, recip, now), sender, testFresh, now); err != nil {
 		t.Fatalf("second ingest: %v", err)
 	}
@@ -161,8 +164,8 @@ func TestIngestExistingThreadNoTransition(t *testing.T) {
 	if err := s.db.QueryRow(`SELECT state FROM threads WHERE id = ?`, thread).Scan(&st); err != nil {
 		t.Fatalf("read thread state: %v", err)
 	}
-	if st != "working" {
-		t.Errorf("thread state = %q, want working (ingest must not transition an existing thread)", st)
+	if st != "input-required" {
+		t.Errorf("thread state = %q, want input-required (a delivered message is the recipient's turn)", st)
 	}
 }
 
