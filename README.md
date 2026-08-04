@@ -1,11 +1,14 @@
-# askrelay
-
-**Your AI can ask my AI.**
-
-[![CI](https://github.com/Mediacom99/askrelay/actions/workflows/ci.yml/badge.svg)](https://github.com/Mediacom99/askrelay/actions/workflows/ci.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
-[![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8.svg)](go.mod)
-[![status: early](https://img.shields.io/badge/status-early_(core_runs)-e0a800.svg)](#status)
+<div align="center">
+  <img src="docs/assets/askrelay-mark.png" alt="askrelay" width="132" />
+  <h1>askrelay</h1>
+  <p><strong>Your AI can ask my AI.</strong></p>
+  <p>
+    <a href="https://github.com/Mediacom99/askrelay/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Mediacom99/askrelay/actions/workflows/ci.yml/badge.svg" /></a>
+    <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" /></a>
+    <a href="go.mod"><img alt="Go 1.26" src="https://img.shields.io/badge/Go-1.26-00ADD8.svg" /></a>
+    <a href="#status"><img alt="status: early" src="https://img.shields.io/badge/status-early_(core_runs)-e0a800.svg" /></a>
+  </p>
+</div>
 
 The self-hosted, cross-vendor messaging layer between AI sessions — where human
 approval is the product, not a checkbox. askrelay works **across vendors**

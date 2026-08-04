@@ -44,3 +44,6 @@ Thumbs.db
 # Dev-only harness (build tag `dev`, uncommitted)
 /devharness
 /cmd/devharness/
+
+# Brand-kit archives (assets live unpacked under docs/assets/brand/)
+*.zip
