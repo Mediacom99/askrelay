@@ -3,6 +3,7 @@ package redact
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func mark(k Kind) string { return "⟦redacted:" + string(k) + "⟧" }
@@ -81,6 +82,188 @@ func TestRedactEnvKeyOverMatch(t *testing.T) {
 	r := Redact("PUBLIC_KEY=https://example.com/pub")
 	if r.Counts[KindEnvSecret] != 1 {
 		t.Errorf("PUBLIC_KEY= expected to over-match as env-secret (T-12 ceiling); counts=%v", r.Counts)
+	}
+}
+
+// --- Adversarial: bypasses a real user could plausibly trigger ---------------
+//
+// Each case below asserts the SECURE expectation ("this secret must not survive
+// un-redacted"). Where the implementation falls short the test FAILS — that
+// failure is the finding, and is intentionally left red rather than weakened.
+func TestRedactBypasses(t *testing.T) {
+	cases := []struct {
+		name   string
+		in     string
+		secret string // raw material that must not appear verbatim in the output
+	}{
+		// Truncated PEM: message got cut off mid-paste, no END line. The whole
+		// key is currently left untouched in plaintext.
+		{"private-key-no-end", "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAtruncatedsecretmaterial\n", "MIIEpAIBAAKCAQEAtruncatedsecretmaterial"},
+
+		// A JWT hard-wrapped by chat/email line-wrapping. Both halves survive.
+		{"jwt-split-by-newline", "tok eyJhbGciOiJIUzI1NiJ9.eyJzdWI\niOiIxMjM0NSJ9.abcDEF123-_XYZ end", "eyJhbGciOiJIUzI1NiJ9.eyJzdWI"},
+
+		// alg=none JWT: trailing dot, empty signature segment.
+		{"jwt-alg-none-empty-sig", "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.", "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0."},
+
+		// Slack app-level / config tokens use "xapp-"/"xoxe-" prefixes, not xox[baprs]-.
+		{"slack-xapp-token", "xapp-1-A0123456789-1234567890123-abcdefabcdefabcdefabcdefabcdefab", "xapp-1-A0123456789"},
+
+		// Two AWS key IDs pasted with no separator (e.g. a stripped-whitespace
+		// table dump): \b fails on both sides of the join point, so neither matches.
+		{"aws-keys-concatenated-no-boundary", "id: AKIAIOSFODNN7EXAMPLEAKIAIOSFODNN7EXAMPLE.", "AKIAIOSFODNN7EXAMPLE"},
+
+		// Windows/cmd style assignment: no "export", space before NAME breaks the
+		// anchored name-prefix match.
+		{"env-cmd-set-style", "set PASSWORD=hunter2ssupersecret", "hunter2ssupersecret"},
+
+		// YAML-style "name: value" (colon, not '='). Very common paste format.
+		{"env-yaml-colon", "password: hunter2ssupersecret", "hunter2ssupersecret"},
+
+		// JSON-style "name": "value" (colon, not '=') for a name containing SECRET.
+		{"env-json-colon", `{"aws_secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"}`, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"},
+
+		// Marker-injection: a stray literal '⟦' right after '=' defeats the
+		// env-secret value class entirely (it requires the value's first byte to
+		// not be '⟦'), leaking the ENTIRE value, not just the first char.
+		{"env-marker-injection-defeats-rule", "PASSWORD=⟦hunter2ssupersecret", "hunter2ssupersecret"},
+
+		// Same injection class against the GCP rule's value group.
+		{"gcp-marker-injection-defeats-rule", `{"private_key":"⟦AAAAsecretmaterialBBBBmoresecret"}`, "AAAAsecretmaterialBBBBmoresecret"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := Redact(c.in)
+			if strings.Contains(r.Text, c.secret) {
+				t.Errorf("BYPASS: secret material survived un-redacted\n  in:     %q\n  out:    %q\n  secret: %q\n  counts: %v", c.in, r.Text, c.secret, r.Counts)
+			}
+		})
+	}
+}
+
+// A quoted env value containing spaces is only PARTIALLY redacted: the value
+// regex stops at the first whitespace, so everything after the space in the
+// quoted string is left in plaintext right next to the marker — worse than a
+// full miss, because the marker gives the sender false confidence the whole
+// secret was scrubbed.
+func TestRedactBypass_QuotedValuePartialLeak(t *testing.T) {
+	in := `PASSWORD="hunter2 with more secret words after the space"`
+	r := Redact(in)
+	if strings.Contains(r.Text, "with more secret words after the space") {
+		t.Errorf("PARTIAL LEAK: tail of a quoted, space-containing secret survived un-redacted: got %q", r.Text)
+	}
+}
+
+// Real GCP service-account JSON embeds a full "-----BEGIN PRIVATE KEY-----...
+// -----END PRIVATE KEY-----" PEM block as the private_key value (escaped \n,
+// not real newlines — DOTALL is irrelevant either way since '.' matches those
+// literal backslash-n bytes too). Rule order means the PrivateKey rule (index
+// 0) consumes that span before the GCP-specific rule (index 1) ever runs, so
+// KindGCPSAKey is effectively unreachable for realistic input: nothing leaks,
+// but the distinct "gcp-service-account" label the Summary is supposed to
+// surface never fires for the one shape it exists to describe.
+func TestRedactGCPRuleUnreachableForRealisticInput(t *testing.T) {
+	in := `{"type":"service_account","private_key":"-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEA\n-----END PRIVATE KEY-----\n"}`
+	r := Redact(in)
+	if r.Counts[KindGCPSAKey] != 0 || r.Counts[KindPrivateKey] != 1 {
+		t.Skipf("informational: got counts=%v (kept as a skip, not a failure, since the secret IS safely redacted either way)", r.Counts)
+	}
+}
+
+// Concatenating two independently-valid PEM blocks must still yield two
+// separate, correctly-scoped redactions (confirms the non-greedy .*? doesn't
+// bridge from the first BEGIN to the last END).
+func TestRedactMultiplePrivateKeysNotBridged(t *testing.T) {
+	in := "-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\nsome text in between\n-----BEGIN EC PRIVATE KEY-----\nBBBB\n-----END EC PRIVATE KEY-----"
+	r := Redact(in)
+	if r.Counts[KindPrivateKey] != 2 {
+		t.Errorf("Counts[private-key] = %d, want 2 (two independent PEM blocks)", r.Counts[KindPrivateKey])
+	}
+	if !strings.Contains(r.Text, "some text in between") {
+		t.Errorf("non-secret text between the two keys was swallowed: %q", r.Text)
+	}
+}
+
+// Marker-forgery around a REAL secret: attacker-controlled text carries a
+// hand-typed fake marker glyph immediately before a genuine secret on the same
+// line, hoping to either dodge the rule or desync Counts. The real secret must
+// still be found and redacted, and Counts must reflect exactly what changed.
+func TestRedactMarkerForgeryDoesNotSuppressRealSecret(t *testing.T) {
+	in := "note ⟦redacted:aws-access-key⟧ but here is a real one AKIAIOSFODNN7EXAMPLE"
+	r := Redact(in)
+	if strings.Contains(r.Text, "AKIAIOSFODNN7EXAMPLE") {
+		t.Errorf("real secret survived next to a forged marker: %q", r.Text)
+	}
+	if r.Counts[KindAWSKey] != 1 {
+		t.Errorf("Counts[aws-access-key] = %d, want 1", r.Counts[KindAWSKey])
+	}
+}
+
+// Fabricated marker text with NO adjacent secret must pass through unchanged
+// and must not be counted (nothing was actually redacted).
+func TestRedactFakeMarkerAloneNotCounted(t *testing.T) {
+	in := "the tool prints things like ⟦redacted:aws-access-key⟧ in its output"
+	r := Redact(in)
+	if r.Redacted() {
+		t.Errorf("fabricated marker text with no real secret was counted: %v", r.Counts)
+	}
+	if r.Text != in {
+		t.Errorf("fabricated marker text was mutated: got %q want %q", r.Text, in)
+	}
+}
+
+// Idempotency / no re-redaction: redacting already-redacted text must be a
+// no-op. This is the structural guarantee the marker-exclusion char classes
+// exist for; assert it directly rather than trusting the char classes by
+// inspection.
+func TestRedactIdempotent(t *testing.T) {
+	seeds := []string{
+		"AKIAIOSFODNN7EXAMPLE AKIAIOSFODNN7EXAMPLE",
+		"GITHUB_TOKEN=ghp_0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+		"PASSWORD=hunter2",
+		`{"private_key":"-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"}`,
+		"bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NSJ9.abc-_123XYZ",
+		"xoxb-1234567890-abcdefghij",
+	}
+	for _, s := range seeds {
+		once := Redact(s)
+		twice := Redact(once.Text)
+		if twice.Redacted() {
+			t.Errorf("re-redacting an already-redacted string found new matches: seed=%q\n once:  %q counts=%v\n twice: %q counts=%v", s, once.Text, once.Counts, twice.Text, twice.Counts)
+		}
+		if twice.Text != once.Text {
+			t.Errorf("re-redacting mutated already-redacted text: %q -> %q", once.Text, twice.Text)
+		}
+	}
+}
+
+// Pathological / large input must stay fast (RE2 is linear; this is a
+// regression guard against an accidental backtracking-style rule being added
+// later, and against FindAll-driven O(n^2) blowups in apply()).
+func TestRedactPathologicalInputStaysLinear(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping perf check in -short mode")
+	}
+	mk := func(n int) string {
+		var b strings.Builder
+		for i := 0; i < n; i++ {
+			b.WriteString("-----BEGIN RSA PRIVATE KEY----- filler filler filler ")
+		}
+		return b.String()
+	}
+	small := mk(2000)
+	large := mk(20000) // 10x
+	t0 := time.Now()
+	Redact(small)
+	tSmall := time.Since(t0)
+	t1 := time.Now()
+	Redact(large)
+	tLarge := time.Since(t1)
+	t.Logf("small(%d)=%v large(%d)=%v", len(small), tSmall, len(large), tLarge)
+	// Generous bound: quadratic blowup would make this thousands of times
+	// slower, not ~10x. Guard against a hang, not a tight perf budget.
+	if tLarge > 5*time.Second {
+		t.Errorf("Redact on %d bytes of unterminated BEGIN markers took %v — possible non-linear blowup", len(large), tLarge)
 	}
 }
 

@@ -35,23 +35,44 @@ type rule struct {
 	group int
 }
 
-// Order matters: unambiguous secret shapes first (so a GITHUB_TOKEN=… is
-// labelled github-token, not env-secret), the broad env rule last. The gcp and
-// env value groups exclude a leading ⟦ so an already-inserted marker is never
-// re-redacted (which would double-count and relabel it).
+// markerRe matches a value that is EXACTLY an already-inserted marker; apply
+// skips those so redaction is idempotent (re-running finds nothing new) without
+// letting a marker-shaped prefix suppress a real secret next to it.
+var markerRe = regexp.MustCompile(`^⟦redacted:[a-z-]+⟧$`)
+
+// Order matters: the GCP JSON rule runs before the PEM rule so a service-account
+// key's whole quoted value is taken in one labelled redaction; unambiguous
+// token shapes run before the broad config rule so a GITHUB_TOKEN=… is labelled
+// github-token, not env-secret. Values are matched in full (no leading-⟦
+// exclusion — that let a marker-shaped prefix leak the real secret after it);
+// idempotency is handled in apply via markerRe instead.
 //
 // ponytail: fixed allow-listed shapes only, no entropy scan (T-12: entropy is a
-// false-positive machine). The env rule matches any NAME containing KEY, so
-// PUBLIC_KEY=… over-redacts — accepted (T-12), and over-redacting is the safe
-// direction for a secret filter.
+// false-positive machine). The config rule matches any NAME containing KEY, so
+// PUBLIC_KEY=… over-redacts — accepted (T-12); over-redaction is the safe
+// direction. Known ceilings (need entropy/NLP we reject): a bare high-entropy
+// blob with no name/shape, secrets in prose, and secrets split by a raw newline.
 var rules = []rule{
-	{KindPrivateKey, regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`), 0},
-	{KindGCPSAKey, regexp.MustCompile(`"private_key"\s*:\s*"([^⟦"]+)"`), 1},
-	{KindJWT, regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b`), 0},
-	{KindAWSKey, regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`), 0},
+	// GCP service-account private_key (distinct label), before the PEM rule so
+	// the whole quoted value — PEM and all — is taken as one gcp redaction.
+	{KindGCPSAKey, regexp.MustCompile(`"private_key"\s*:\s*("[^"]*"[^\s,}]*|[^\s,}]+)`), 1},
+	// PEM PRIVATE KEY block; matches to END, or to end-of-input if the paste was
+	// truncated — a cut-off key must not leak the material that IS present.
+	{KindPrivateKey, regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\z)`), 0},
+	// JWT header.payload(.signature)? — the signature is optional, so alg=none
+	// tokens and a header.payload half wrapped onto its own line are still caught.
+	{KindJWT, regexp.MustCompile(`\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*)?`), 0},
+	// AWS access-key id; no \b, so concatenated ids (whitespace-stripped dumps)
+	// are each caught (over-matching a longer alnum run is the safe direction).
+	{KindAWSKey, regexp.MustCompile(`(?:AKIA|ASIA)[0-9A-Z]{16}`), 0},
 	{KindGitHubToken, regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,})\b`), 0},
-	{KindSlackToken, regexp.MustCompile(`\bxox[baprs]-[A-Za-z0-9-]{10,}\b`), 0},
-	{KindEnvSecret, regexp.MustCompile(`(?im)^([ \t]*(?:export[ \t]+)?[A-Za-z0-9_]*(?:TOKEN|SECRET|KEY|PASSWORD)[A-Za-z0-9_]*[ \t]*=[ \t]*)([^⟦\s]\S*)`), 2},
+	// Slack bot/user/app/refresh token families (xox[baprse]-, xapp-).
+	{KindSlackToken, regexp.MustCompile(`\b(?:xox[baprse]-|xapp-)[A-Za-z0-9.-]{10,}\b`), 0},
+	// Config assignment NAME[:=]VALUE where NAME contains a secret-ish word.
+	// Covers .env, shell export/set (via the whitespace prefix), YAML (:), and
+	// JSON ("name": "value", reachable after { or ,). Quoted values are matched
+	// whole so a space inside a quoted secret can't leave a trailing leak.
+	{KindEnvSecret, regexp.MustCompile(`(?im)(?:^|[\s{,])["']?[A-Za-z0-9_.-]*(?:TOKEN|SECRET|KEY|PASSWORD|PASSWD|CREDENTIAL)[A-Za-z0-9_.-]*["']?[ \t]*[:=][ \t]*("[^"]*"[^\s,}]*|'[^']*'[^\s,}]*|[^\s,}]+)`), 1},
 }
 
 // Result is redacted text plus a per-kind count of what was replaced.
@@ -105,16 +126,20 @@ func (ru rule) apply(s string) (string, int) {
 	}
 	marker := fmt.Sprintf(markerFmt, ru.kind)
 	var b strings.Builder
-	last := 0
+	last, n := 0, 0
 	for _, loc := range locs {
 		gs, ge := loc[2*ru.group], loc[2*ru.group+1]
 		if gs < 0 { // group didn't participate
 			continue
 		}
-		b.WriteString(s[last:gs]) // untouched text (incl. any KEY= prefix)
+		if markerRe.MatchString(s[gs:ge]) { // already redacted — don't re-redact or re-count
+			continue
+		}
+		b.WriteString(s[last:gs]) // untouched text (incl. any NAME= prefix)
 		b.WriteString(marker)
 		last = ge
+		n++
 	}
 	b.WriteString(s[last:])
-	return b.String(), len(locs)
+	return b.String(), n
 }
