@@ -23,7 +23,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-08 | WS hub, delivery, retention sweeper | DONE | WP-03 WP-04 | T-04 T-09 |
 | WP-09 | daemon core (enroll, queue, stdio MCP) | TODO | WP-01 WP-07 WP-08 WP-11 | T-11 |
 | WP-10 | daemon ↔ Claude Code push (channels + hooks) | TODO | WP-09 | S-01 |
-| WP-11 | `internal/redact` — secret redaction | TODO | — | T-12 |
+| WP-11 | `internal/redact` — secret redaction | DONE | — | T-12 |
 | WP-12 | CLI verbs (inbox, approve, device, status) | TODO | WP-04 WP-08 | T-05 |
 | WP-13 | end-to-end harness + golden flows | TODO | WP-06 WP-07 WP-08 WP-09 | — |
 | WP-14 | packaging (Docker, GoReleaser, brew, npm wrapper) | TODO | WP-13 | T-13 |
@@ -215,7 +215,16 @@ reference and bind every WP.
   PASSWORD)`. Visible `⟦redacted:<kind>⟧` markers; sender warned; no entropy
   heuristics (false-positive machine). Hook: executable at
   `redact_hook` config path, receives text on stdin, returns replacement.
-  *APPROVED (maintainer, 2026-07-16)*
+  *APPROVED (maintainer, 2026-07-16)* · **Amended 2026-08-05 (WP-11 quality
+  pass):** the assignment matcher was widened past `.env` `KEY=value` to also
+  cover YAML `name: value`, JSON `"name": "value"`, shell `export`/`set`, and
+  quoted values — engineers paste configs in those forms, and the original
+  line-anchored `=`-only rule leaked them. Name-word set gained `PASSWD` and
+  `CREDENTIAL`; Slack gained `xapp-`/`xoxe-`; truncated PEMs and alg=none JWTs
+  are caught. Still fixed-pattern, no entropy. Accepted permanent ceilings
+  (would need entropy/NLP, rejected): bare high-entropy blobs, secrets in prose,
+  raw-newline-split tokens, zero-width-char injection, percent-encoding — the
+  approval gate is the backstop for these.
 - **T-13 — Dev/prod build split retained** (`-tags dev`: verbose tracing,
   localhost debug endpoint; prod artifacts contain neither; CI builds both).
   *APPROVED (maintainer, 2026-07-16)*
@@ -619,16 +628,19 @@ schema; both paths degrade gracefully when Claude Code is absent.
 
 ### WP-11 — `internal/redact`
 
-**Status:** TODO · **Depends on:** — · **Gated by:** T-12 · **Spec:** D-12,
-arch §5.3, §6.
+**Status:** DONE (2026-08-05, PR #10) · **Depends on:** — · **Gated by:** T-12 ·
+**Spec:** D-12, arch §5.3, §6.
 
-**Goal:** the T-12 pattern set with visible `⟦redacted:<kind>⟧` markers,
-sender warning surface, and the external-hook runner; relay-side backstop mode
-(flag, don't rewrite).
+**Goal:** the T-12 pattern set with visible `⟦redacted:<kind>⟧` markers, sender
+warning surface (`Result.Summary`), and the fail-closed external-hook runner.
+**Client-side only** — no relay-side backstop (D-12; arch §5.3 removed it as a
+blocker, so the earlier "backstop mode" phrasing here was stale and is dropped).
 
 **Test plan:** corpus of true positives per pattern; false-positive corpus
 (UUIDs, git SHAs, base64 blobs) stays untouched; hook contract (stdin/stdout,
-timeout, failure = block send, never silently pass).
+timeout, failure = block send, never silently pass). *(Delivered, plus the
+quality-pass adversarial suites + a fuzz idempotency/no-panic target with a
+committed regression corpus.)*
 
 ### WP-12 — CLI verbs
 
@@ -868,6 +880,28 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
   draft pipeline. **Pushed to WP-09:** the gated daemon-signed `submit` (with
   `From.Device` binding, L3). Changed: WP-06 (browser-client signing travels
   with it, D-23), WP-09 (daemon-signed submit).
+- 2026-08-05 — **WP-11 DONE** (PR #10; `internal/redact` — client-side secret
+  redaction). Stdlib-only (no dep). `Redact` applies the T-12 fixed-pattern set
+  with visible `⟦redacted:<kind>⟧` markers + a `Summary()` warning surface;
+  `Hook` runs an operator's external scanner fail-closed. **Confirmed
+  client-side only** (D-12) — the stale "relay-side backstop" line in the WP-11
+  entry was dropped. The three-agent pass found the trust core sound but caught
+  real holes, all fixed in `eb14851` and pinned by the agents' own adversarial
+  suites + a fuzz target (idempotency/no-panic) with a committed regression
+  corpus: **(CRITICAL)** `Hook` ignored its ctx deadline and returned a *false
+  success* when a hook backgrounded a descendant holding stdout open — fixed
+  with `cmd.WaitDelay`; **(HIGH)** a marker-forgery bypass leaked the real
+  secret (the leading-`⟦` value exclusion made the whole rule fail) — fixed by
+  matching values whole + a markerRe idempotency skip in `apply`; **(HIGH)**
+  real config formats leaked — the maintainer approved **widening T-12** to
+  YAML/JSON/quoted/`export`/`set` forms (amended in the T-12 entry), which also
+  catches named AWS *secret* keys, truncated PEMs, and Slack `xapp-`. Empty hook
+  output for non-empty input now blocks the send (maintainer decision); stderr
+  is discarded (can't leak a secret a hook echoes there). **Honest framing
+  recorded:** fixed-pattern redaction is a best-effort safety net, not a
+  guarantee — bare-entropy blobs, prose secrets, zero-width-char and
+  percent-encoding evasions are accepted ceilings (T-12 rejects entropy/NLP);
+  the human approval gate is the real backstop. Changed: T-12 (amended).
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
