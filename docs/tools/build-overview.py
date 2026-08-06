@@ -24,6 +24,7 @@ MARKED = Path(__file__).resolve().parent / "marked.min.js"
 DOCS = [
     ("plan", "Implementation plan", "docs/askrelay-implementation-plan.md"),
     ("arch", "Architecture", "docs/askrelay-architecture.md"),
+    ("sysmap", "System map", "docs/askrelay-system-map.md"),
     ("launch", "Launch checklist", "docs/askrelay-launch-checklist.md"),
     ("decisions", "Decision log", "docs/phase2-decision-log.md"),
     ("readme", "README", "README.md"),
