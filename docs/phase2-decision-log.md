@@ -544,3 +544,35 @@ WP-06 + browser signing are taken together when the browser-connector path is
 wanted.
 
 **Verdict:** APPROVED (maintainer, 2026-07-31).
+
+## D-24 — Browser AS "login" is device-credential paste (Option A); authN+consent are one step in v1
+
+**Decision (maintainer, 2026-08-08, during the WP-06 build):** the embedded
+OAuth authorization server's "login page" authenticates the person by having
+them paste their existing **device credential** (§4.3), which the AS verifies
+and re-checks live (`ActiveDeviceByID`) before minting an authorization code.
+This is the smallest path that makes WP-06's device-re-check obligation exact
+and keeps the browser-client-signing sub-decision deferred (D-23) — no
+relay-held browser key, delivery stays relay-attested (D-10/D-23).
+
+**Known tradeoff (surfaced by the WP-06 security pass):** authentication and
+consent collapse into a single POST — pasting the long-lived device credential
+both proves identity *and* authorizes the requesting client, with no separate
+"authorize THIS app for THESE permissions" screen and no scope shown. Because a
+legitimate connect flow trains the same paste-your-credential gesture, a
+phishing link to `/oauth/authorize?client_id=<attacker>&…` served from the
+*real* relay domain can harvest a full-privilege access+refresh token if the
+human obliges. This is inherent to any bearer-credential-authorizes-any-client
+OAuth model (the "Sign in with X" consent-phishing class), sharpened here by the
+zero-scope, single-step design. It is not a code defect — the AS enforces PKCE,
+device re-check, CSP, and html escaping correctly.
+
+**Deferred mitigation (v1.1, not blocking WP-06):** separate authN from consent —
+after credential verification, establish a short-lived AS-side session and render
+a second, explicit consent screen naming the resolved client (CIMD origin, or DCR
+`client_name` + redirect host) and the capability being granted, requiring a
+distinct confirming action before the code is minted; plus a cap on how many
+*new* OAuth clients one device credential may authorize per window (a cheap
+mass-authorization tripwire). No ML classifier (D-10).
+
+**Verdict:** APPROVED (maintainer, 2026-08-08).
