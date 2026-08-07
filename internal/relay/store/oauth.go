@@ -102,12 +102,34 @@ func (s *Store) CreateAuthCode(code string, b AuthCode, expiresAt, now time.Time
 	return nil
 }
 
-// ConsumeAuthCode atomically marks a code used and returns its binding. Unknown,
-// expired, or already-consumed all collapse to ErrCodeInvalid (no oracle). The
-// conditional UPDATE is the single-use race guard.
-func (s *Store) ConsumeAuthCode(code string, now time.Time) (AuthCode, error) {
+// AuthCodeByCode returns a live (unconsumed, unexpired) code's binding WITHOUT
+// consuming it. Unknown/expired/consumed all collapse to ErrCodeInvalid (no
+// oracle). The caller validates the request against the binding, then calls
+// ConsumeAuthCode to claim it — so a bad client_id/redirect_uri/PKCE attempt
+// cannot burn a code the legitimate client still needs (codes travel in a
+// redirect and can be observed).
+func (s *Store) AuthCodeByCode(code string, now time.Time) (AuthCode, error) {
 	var b AuthCode
-	err := s.writeTx(func(tx *sql.Tx) error {
+	err := s.db.QueryRow(
+		`SELECT client_id, redirect_uri, code_challenge, resource, person_id, device_id, client_type
+		 FROM oauth_codes WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
+		hashToken(code), now.Unix()).
+		Scan(&b.ClientID, &b.RedirectURI, &b.CodeChallenge, &b.Resource, &b.PersonID, &b.DeviceID, &b.ClientType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return AuthCode{}, ErrCodeInvalid
+	}
+	if err != nil {
+		return AuthCode{}, fmt.Errorf("store: auth code lookup: %w", err)
+	}
+	return b, nil
+}
+
+// ConsumeAuthCode atomically claims a live code (the single-use race guard):
+// exactly one concurrent caller wins. Unknown/expired/already-consumed →
+// ErrCodeInvalid. Call it only AFTER validating the request against the binding
+// from AuthCodeByCode, so a failed binding check leaves the code redeemable.
+func (s *Store) ConsumeAuthCode(code string, now time.Time) error {
+	return s.writeTx(func(tx *sql.Tx) error {
 		res, err := tx.Exec(
 			`UPDATE oauth_codes SET consumed_at = ? WHERE code_hash = ? AND consumed_at IS NULL AND expires_at > ?`,
 			now.Unix(), hashToken(code), now.Unix())
@@ -121,15 +143,8 @@ func (s *Store) ConsumeAuthCode(code string, now time.Time) (AuthCode, error) {
 		if n == 0 {
 			return ErrCodeInvalid
 		}
-		return tx.QueryRow(
-			`SELECT client_id, redirect_uri, code_challenge, resource, person_id, device_id, client_type
-			 FROM oauth_codes WHERE code_hash = ?`, hashToken(code)).
-			Scan(&b.ClientID, &b.RedirectURI, &b.CodeChallenge, &b.Resource, &b.PersonID, &b.DeviceID, &b.ClientType)
+		return nil
 	})
-	if err != nil {
-		return AuthCode{}, err
-	}
-	return b, nil
 }
 
 // RefreshGrant is the binding a refresh token carries. Returned by ConsumeRefreshToken.

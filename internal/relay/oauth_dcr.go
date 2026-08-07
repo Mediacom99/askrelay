@@ -2,7 +2,6 @@ package relay
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -31,8 +30,9 @@ func (s *Server) handleJWKS(w http.ResponseWriter, _ *http.Request) {
 // rate limiting), not here. Only redirect_uris are security-relevant and are
 // validated; the rest of the client metadata is untrusted display text.
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRegisterBody)
 	var meta oauthex.ClientRegistrationMetadata
-	if err := json.NewDecoder(io.LimitReader(r.Body, maxRegisterBody)).Decode(&meta); err != nil {
+	if err := json.NewDecoder(r.Body).Decode(&meta); err != nil {
 		s.registerError(w, "invalid_client_metadata", "malformed registration body")
 		return
 	}

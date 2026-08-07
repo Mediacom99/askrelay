@@ -53,7 +53,10 @@ func (s *Server) tokenFromCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC()
-	b, err := s.store.ConsumeAuthCode(code, now)
+	// Read the binding WITHOUT consuming: a bad client_id/redirect/PKCE attempt
+	// must not burn a code the legitimate client can still redeem — the code
+	// travels in a redirect and can be observed by a third party.
+	b, err := s.store.AuthCodeByCode(code, now)
 	if err != nil {
 		s.log.Warn("token refused", "grant", "authorization_code", "reason", "bad_code")
 		s.tokenError(w, http.StatusBadRequest, "invalid_grant")
@@ -63,6 +66,13 @@ func (s *Server) tokenFromCode(w http.ResponseWriter, r *http.Request) {
 	// PKCE challenge whose verifier only the real client holds.
 	if b.ClientID != clientID || b.RedirectURI != redirectURI || !oauth.VerifyPKCE(b.CodeChallenge, verifier) {
 		s.log.Warn("token refused", "grant", "authorization_code", "reason", "binding_mismatch")
+		s.tokenError(w, http.StatusBadRequest, "invalid_grant")
+		return
+	}
+	// Binding matched — claim the code single-use. A lost concurrent race (or an
+	// expiry between read and claim) collapses to the same opaque refusal.
+	if err := s.store.ConsumeAuthCode(code, now); err != nil {
+		s.log.Warn("token refused", "grant", "authorization_code", "reason", "code_claim_lost")
 		s.tokenError(w, http.StatusBadRequest, "invalid_grant")
 		return
 	}

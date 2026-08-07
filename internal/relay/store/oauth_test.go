@@ -65,17 +65,28 @@ func TestAuthCodeSingleUse(t *testing.T) {
 		t.Fatalf("CreateAuthCode: %v", err)
 	}
 
-	got, err := s.ConsumeAuthCode("the-code", now)
+	// Reading the binding does not consume: it can be read again.
+	got, err := s.AuthCodeByCode("the-code", now)
 	if err != nil {
-		t.Fatalf("ConsumeAuthCode: %v", err)
+		t.Fatalf("AuthCodeByCode: %v", err)
 	}
 	if got != want {
 		t.Errorf("binding = %+v, want %+v", got, want)
 	}
+	if _, err := s.AuthCodeByCode("the-code", now); err != nil {
+		t.Errorf("read must not consume: second read err = %v", err)
+	}
 
-	// Second consume of the same code is refused (single-use guard).
-	if _, err := s.ConsumeAuthCode("the-code", now); !errors.Is(err, ErrCodeInvalid) {
-		t.Errorf("double consume: err = %v, want ErrCodeInvalid", err)
+	// Claiming it once succeeds; a second claim is refused (single-use guard),
+	// and after the claim the binding read is refused too (no oracle).
+	if err := s.ConsumeAuthCode("the-code", now); err != nil {
+		t.Fatalf("ConsumeAuthCode: %v", err)
+	}
+	if err := s.ConsumeAuthCode("the-code", now); !errors.Is(err, ErrCodeInvalid) {
+		t.Errorf("double claim: err = %v, want ErrCodeInvalid", err)
+	}
+	if _, err := s.AuthCodeByCode("the-code", now); !errors.Is(err, ErrCodeInvalid) {
+		t.Errorf("read after claim: err = %v, want ErrCodeInvalid", err)
 	}
 }
 
@@ -84,7 +95,7 @@ func TestAuthCodeUnknownAndExpired(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	pid, did := enrollDevice(t, s, "marco@example.com", now)
 
-	if _, err := s.ConsumeAuthCode("never-existed", now); !errors.Is(err, ErrCodeInvalid) {
+	if _, err := s.AuthCodeByCode("never-existed", now); !errors.Is(err, ErrCodeInvalid) {
 		t.Errorf("unknown code: err = %v, want ErrCodeInvalid", err)
 	}
 
@@ -92,9 +103,13 @@ func TestAuthCodeUnknownAndExpired(t *testing.T) {
 	if err := s.CreateAuthCode("stale", b, now.Add(time.Minute), now); err != nil {
 		t.Fatalf("CreateAuthCode: %v", err)
 	}
-	// Consume after expiry → refused, no oracle distinguishing it from unknown.
-	if _, err := s.ConsumeAuthCode("stale", now.Add(2*time.Minute)); !errors.Is(err, ErrCodeInvalid) {
-		t.Errorf("expired code: err = %v, want ErrCodeInvalid", err)
+	// After expiry → refused, no oracle distinguishing it from unknown, on both
+	// the read and the claim.
+	if _, err := s.AuthCodeByCode("stale", now.Add(2*time.Minute)); !errors.Is(err, ErrCodeInvalid) {
+		t.Errorf("expired read: err = %v, want ErrCodeInvalid", err)
+	}
+	if err := s.ConsumeAuthCode("stale", now.Add(2*time.Minute)); !errors.Is(err, ErrCodeInvalid) {
+		t.Errorf("expired claim: err = %v, want ErrCodeInvalid", err)
 	}
 }
 
@@ -179,7 +194,7 @@ func TestSweepOAuthRemovesExpiredKeepsLive(t *testing.T) {
 		t.Errorf("swept = %d, want 2 (one code + one refresh)", n)
 	}
 	// The live pair survives.
-	if _, err := s.ConsumeAuthCode("live-code", now.Add(30*time.Minute)); err != nil {
+	if _, err := s.AuthCodeByCode("live-code", now.Add(30*time.Minute)); err != nil {
 		t.Errorf("live code swept away: %v", err)
 	}
 	if _, err := s.ConsumeRefreshToken("live-rt", now.Add(30*time.Minute)); err != nil {

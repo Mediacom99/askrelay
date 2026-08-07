@@ -114,10 +114,10 @@ func TestAuthorizePOSTHappyPath(t *testing.T) {
 	if code == "" {
 		t.Fatal("no code in redirect")
 	}
-	// The code is consumable and carries the person/device/challenge binding.
-	b, err := s.store.ConsumeAuthCode(code, time.Now().UTC())
+	// The code carries the person/device/challenge binding.
+	b, err := s.store.AuthCodeByCode(code, time.Now().UTC())
 	if err != nil {
-		t.Fatalf("ConsumeAuthCode: %v", err)
+		t.Fatalf("AuthCodeByCode: %v", err)
 	}
 	if b.PersonID != person || b.DeviceID != device || b.CodeChallenge != testChallenge {
 		t.Errorf("binding = %+v, want person %q device %q challenge %q", b, person, device, testChallenge)
