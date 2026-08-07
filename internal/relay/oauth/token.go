@@ -68,6 +68,10 @@ func NewIssuer(keyPath, audience string, ttl time.Duration) (*Issuer, error) {
 	}, nil
 }
 
+// AccessTTL is the access-token lifetime, surfaced for the token endpoint's
+// expires_in (WP-06).
+func (i *Issuer) AccessTTL() time.Duration { return i.ttl }
+
 // Mint returns a signed access token (use="access") for personID / clientType,
 // valid for the issuer's ttl from now. now is injected so expiry is testable.
 func (i *Issuer) Mint(personID, clientType string, now time.Time) (string, error) {
