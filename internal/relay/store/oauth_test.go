@@ -97,3 +97,92 @@ func TestAuthCodeUnknownAndExpired(t *testing.T) {
 		t.Errorf("expired code: err = %v, want ErrCodeInvalid", err)
 	}
 }
+
+func TestRefreshRotateAndReuseRevokesFamily(t *testing.T) {
+	s := newStore(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	pid, did := enrollDevice(t, s, "marco@example.com", now)
+
+	g := RefreshGrant{ClientID: "client-x", PersonID: pid, DeviceID: did, ClientType: "claude", Resource: "https://relay.example.com"}
+	// A second live token in the SAME family (person × client) — the successor a
+	// legitimate rotation would have minted.
+	if err := s.CreateRefreshToken("rt1", g, now.Add(time.Hour), now); err != nil {
+		t.Fatalf("CreateRefreshToken rt1: %v", err)
+	}
+	if err := s.CreateRefreshToken("rt-sibling", g, now.Add(time.Hour), now); err != nil {
+		t.Fatalf("CreateRefreshToken rt-sibling: %v", err)
+	}
+
+	got, err := s.ConsumeRefreshToken("rt1", now)
+	if err != nil {
+		t.Fatalf("ConsumeRefreshToken: %v", err)
+	}
+	if got != g {
+		t.Errorf("grant = %+v, want %+v", got, g)
+	}
+
+	// Replay of the consumed rt1 → reuse signal AND the family is revoked.
+	if _, err := s.ConsumeRefreshToken("rt1", now); !errors.Is(err, ErrRefreshReused) {
+		t.Errorf("replay: err = %v, want ErrRefreshReused", err)
+	}
+	// The still-live sibling is now dead too (family revoke). Presenting it reads
+	// as a consumed row → replay, indistinguishable from a real reuse.
+	if _, err := s.ConsumeRefreshToken("rt-sibling", now); !errors.Is(err, ErrRefreshReused) {
+		t.Errorf("sibling after family revoke: err = %v, want ErrRefreshReused", err)
+	}
+}
+
+func TestRefreshUnknownAndExpired(t *testing.T) {
+	s := newStore(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	pid, did := enrollDevice(t, s, "marco@example.com", now)
+
+	if _, err := s.ConsumeRefreshToken("never-existed", now); !errors.Is(err, ErrRefreshInvalid) {
+		t.Errorf("unknown refresh: err = %v, want ErrRefreshInvalid", err)
+	}
+
+	g := RefreshGrant{ClientID: "c", PersonID: pid, DeviceID: did}
+	if err := s.CreateRefreshToken("stale-rt", g, now.Add(time.Hour), now); err != nil {
+		t.Fatalf("CreateRefreshToken: %v", err)
+	}
+	if _, err := s.ConsumeRefreshToken("stale-rt", now.Add(2*time.Hour)); !errors.Is(err, ErrRefreshInvalid) {
+		t.Errorf("expired refresh: err = %v, want ErrRefreshInvalid", err)
+	}
+}
+
+func TestSweepOAuthRemovesExpiredKeepsLive(t *testing.T) {
+	s := newStore(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	pid, did := enrollDevice(t, s, "marco@example.com", now)
+
+	code := AuthCode{ClientID: "c", RedirectURI: "u", CodeChallenge: "ch", PersonID: pid, DeviceID: did}
+	if err := s.CreateAuthCode("expired-code", code, now.Add(time.Minute), now); err != nil {
+		t.Fatalf("CreateAuthCode expired: %v", err)
+	}
+	if err := s.CreateAuthCode("live-code", code, now.Add(time.Hour), now); err != nil {
+		t.Fatalf("CreateAuthCode live: %v", err)
+	}
+	g := RefreshGrant{ClientID: "c", PersonID: pid, DeviceID: did}
+	if err := s.CreateRefreshToken("expired-rt", g, now.Add(time.Minute), now); err != nil {
+		t.Fatalf("CreateRefreshToken expired: %v", err)
+	}
+	if err := s.CreateRefreshToken("live-rt", g, now.Add(time.Hour), now); err != nil {
+		t.Fatalf("CreateRefreshToken live: %v", err)
+	}
+
+	// Sweep at a time past the short-lived pair's expiry but before the live pair.
+	n, err := s.SweepOAuth(now.Add(30 * time.Minute))
+	if err != nil {
+		t.Fatalf("SweepOAuth: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("swept = %d, want 2 (one code + one refresh)", n)
+	}
+	// The live pair survives.
+	if _, err := s.ConsumeAuthCode("live-code", now.Add(30*time.Minute)); err != nil {
+		t.Errorf("live code swept away: %v", err)
+	}
+	if _, err := s.ConsumeRefreshToken("live-rt", now.Add(30*time.Minute)); err != nil {
+		t.Errorf("live refresh swept away: %v", err)
+	}
+}
