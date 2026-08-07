@@ -18,7 +18,7 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-03 | `internal/relay/store` — SQLite persistence | DONE | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | DONE | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | DONE | WP-04 | T-06 |
-| WP-06 | relay OAuth: embedded AS + client registration — **off the critical path (D-23)**, taken with browser-client signing when the browser-connector path is wanted | TODO | WP-05 | T-06 |
+| WP-06 | relay OAuth: embedded AS + client registration — AS "login" is device-credential paste (Option A, D-24); CIMD same-origin-only pending S-04 | DONE (PR #11) | WP-05 | T-06 |
 | WP-07 | relay MCP surface (tools + spotlighting) | DONE | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
 | WP-08 | WS hub, delivery, retention sweeper | DONE | WP-03 WP-04 | T-04 T-09 |
 | WP-09 | daemon core (enroll, queue, stdio MCP) | TODO | WP-01 WP-07 WP-08 WP-11 | T-11 |
@@ -918,6 +918,30 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
   guarantee — bare-entropy blobs, prose secrets, zero-width-char and
   percent-encoding evasions are accepted ceilings (T-12 rejects entropy/NLP);
   the human approval gate is the real backstop. Changed: T-12 (amended).
+- 2026-08-08 — **WP-06 DONE** (PR #11; embedded OAuth 2.1 authorization server —
+  5 subtasks + three-agent quality pass + maintainer-approved fixes). Owns
+  `0002_oauth.sql` (clients / single-use PKCE codes / rotating refresh tokens
+  with person×client reuse-revoke). Both WP-06 obligations verified in code+tests:
+  `ActiveDeviceByID` re-check on the shared `issueTokens` tail (both grants) and
+  single-audience `Mint`. No new deps — go-sdk's `oauthex` types are reused for
+  the RFC 8414 metadata / DCR wire shapes; the AS server side is hand-rolled
+  (go-sdk's `AuthorizationCodeHandler` is the client side only). **Maintainer
+  decision D-24:** the AS "login" is device-credential paste (Option A) — makes
+  the device re-check exact and keeps browser-client signing deferred (D-23);
+  the single-step authN+consent phishing tradeoff + a deferred v1.1 two-step
+  consent screen are recorded in D-24. **Quality pass** (fresh-review verdict
+  ACCEPT; no takeover path found by any agent) produced one real fix and one
+  polish: **(F1, code-burn)** `/oauth/token` consumed the code *before*
+  validating client/redirect/PKCE, so an observer of a code (they ride in the
+  302 `Location`) could burn it and deny the legit exchange — fixed to
+  **validate-then-consume** (`AuthCodeByCode` read + atomic `ConsumeAuthCode`
+  claim; single-use race guard preserved); **(F2)** DCR body cap unified to
+  `http.MaxBytesReader`. Adopted the agents' ~46 adversarial tests. **Accepted
+  ceilings:** CIMD is same-origin-only pending S-04 (no metadata-doc fetch —
+  SSRF-safe; R-10); DCR is unauthenticated by spec with no in-app rate/row cap,
+  so a fronting reverse-proxy limiter is operator-mandatory once the browser
+  path is enabled (WP-04/WP-15 docs). Changed: WP-06 (amended), D-24 (new),
+  `0001_init.sql` (stale comment).
 
 ## 8. Kill criteria & market checkpoints (D-19)
 
