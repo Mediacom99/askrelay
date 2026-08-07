@@ -118,5 +118,5 @@ CREATE TABLE grants (
 CREATE UNIQUE INDEX idx_grants_one_active
     ON grants(thread_id, person_id, direction) WHERE revoked_at IS NULL;
 
--- oauth_* tables deliberately absent: WP-05 owns their design and ships
--- them as 0002_oauth.sql (plan §6, moved 2026-07-24).
+-- oauth_* tables deliberately absent: WP-06 owns their design and ships
+-- them as 0002_oauth.sql (plan §6, moved WP-05 -> WP-06 on 2026-07-26).

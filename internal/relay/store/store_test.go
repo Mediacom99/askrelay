@@ -33,8 +33,8 @@ func TestOpenAppliesPragmasAndMigrations(t *testing.T) {
 	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatalf("read user_version: %v", err)
 	}
-	if version != 1 {
-		t.Errorf("user_version = %d, want 1 (one embedded migration)", version)
+	if version != 2 {
+		t.Errorf("user_version = %d, want 2 (two embedded migrations)", version)
 	}
 }
 

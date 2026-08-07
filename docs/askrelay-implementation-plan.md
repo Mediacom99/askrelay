@@ -471,6 +471,22 @@ resource server is stateless and ships no oauth tables).
 rejected; DCR'd and CIMD clients both reach a working token; state/nonce
 handling; a claude.ai and ChatGPT connector each complete auth in S-04.
 
+**Quality-pass amendments (2026-08-08, during the WP-06 build):**
+- **CIMD is same-origin-only pending S-04.** The AS accepts a CIMD `client_id`
+  (an https URL) and binds `redirect_uri` by same scheme+host; it does **not**
+  fetch/validate the Client ID Metadata Document (SSRF-safe v1 — go-sdk v1.6.1
+  ships no CIMD-fetch helper). The metadata-document fetch is deferred to S-04
+  (live-ChatGPT validation, WP-13). "CIMD acceptance" above means this
+  structural bind, not full document validation.
+- **R-10 rate limiting is operator-mandatory for the browser path.** DCR
+  (`POST /oauth/register`) is unauthenticated by spec; there is no in-app rate
+  or row cap and `SweepOAuth` does not prune `oauth_clients`. Self-host docs
+  (WP-04/WP-15) MUST present a fronting reverse-proxy rate limiter as
+  **required**, not optional, once the browser-connector path is enabled.
+- **AS "login" = device-credential paste (Option A), authN+consent in one step;
+  the consent-phishing tradeoff and a deferred two-step consent screen are
+  recorded in D-24.**
+
 ### WP-07 — relay MCP surface
 
 **Status:** DONE (2026-07-31, PR #6) · **Depends on:** WP-01 WP-02 WP-03 WP-05 ·

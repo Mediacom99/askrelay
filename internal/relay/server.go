@@ -41,6 +41,12 @@ func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger)
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
 	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))
+	s.mux.HandleFunc("GET "+oauth.AuthServerMetaPath, s.handleASMetadata)
+	s.mux.HandleFunc("GET "+oauth.JWKSPath, s.handleJWKS)
+	s.mux.HandleFunc("GET "+oauth.AuthorizePath, s.handleAuthorize)
+	s.mux.HandleFunc("POST "+oauth.AuthorizePath, s.handleAuthorizeSubmit)
+	s.mux.HandleFunc("POST "+oauth.TokenPath, s.handleToken)
+	s.mux.HandleFunc("POST "+oauth.RegisterPath, s.handleRegister)
 	s.mux.Handle("POST /mcp", s.bearer(maxBytes(mcp.NewHandler(st, log, Version, s).HTTPHandler(), maxMCPBody)))
 	s.mux.HandleFunc("GET /ws", s.handleWS)
 	return s
@@ -115,7 +121,11 @@ func (s *Server) sweepOnce(now time.Time) {
 	if err != nil {
 		s.log.Error("prune tombstones", "err", err)
 	}
-	s.log.Info("retention sweep", "messages", msgs, "drafts", drafts, "tombstones", tombs)
+	oauthRows, err := s.store.SweepOAuth(now)
+	if err != nil {
+		s.log.Error("sweep oauth", "err", err)
+	}
+	s.log.Info("retention sweep", "messages", msgs, "drafts", drafts, "tombstones", tombs, "oauth", oauthRows)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, _ *http.Request) {
