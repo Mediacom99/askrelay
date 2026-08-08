@@ -30,11 +30,21 @@ jobs:
       - name: Build (dev tags)
         run: go build -tags dev ./...
 
+      - name: Static build (CGO_ENABLED=0)
+        run: CGO_ENABLED=0 go build ./...
+
+      - name: Cross-compile smoke (release targets)
+        run: |
+          for target in linux/arm64 darwin/arm64 windows/amd64; do
+            GOOS=${target%/*} GOARCH=${target#*/} CGO_ENABLED=0 go build ./... \
+              && echo "ok: $target" || exit 1
+          done
+
       - name: Vet
         run: go vet ./...
 
-      - name: Test
-        run: go test ./...
+      - name: Test (race)
+        run: go test -race ./...
 
   lint:
     name: golangci-lint

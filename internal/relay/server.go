@@ -28,8 +28,8 @@ type Server struct {
 	log    *slog.Logger
 	mux    *http.ServeMux
 	hub    *hub
-	// bearer guards protected routes with access-token validation. WP-07 wraps
-	// /mcp with it; nothing uses it yet in the skeleton.
+	// bearer guards protected routes with access-token validation (WP-05); the
+	// /mcp route is wrapped with it in NewServer.
 	bearer func(http.Handler) http.Handler
 }
 
@@ -57,8 +57,15 @@ func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger)
 func (s *Server) Run(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:              s.cfg.ListenAddr,
-		Handler:           s.logRequests(s.mux),
+		Handler:           s.logRequests(s.recoverPanic(s.mux)),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// No global WriteTimeout on purpose: wait_for_activity long-polls up to
+		// the client-profile cap (240s / 25m, mcp.profileCap), and a global write
+		// deadline would sever those legitimate long-polls. Use per-handler
+		// http.ResponseController deadlines if finer control is ever needed.
+		ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelError),
 	}
 	errc := make(chan error, 1)
 	go func() {
@@ -142,6 +149,25 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		s.log.Info("request",
 			"method", r.Method, "path", r.URL.Path,
 			"status", rec.status, "dur_ms", time.Since(start).Milliseconds())
+	})
+}
+
+// recoverPanic turns a handler panic into a sanitized 500 plus a boundary log
+// line, instead of a bare connection reset. net/http already keeps the process
+// alive on a per-request panic, but the panic would bypass slog and the client
+// would see an abrupt drop. The panic value is deliberately NOT logged — it can
+// carry message content (T-18); the method+path are enough to locate the fault.
+// Sits inside logRequests so the recovered request still gets its 500 access-log
+// line.
+func (s *Server) recoverPanic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				s.log.Error("request panic", "method", r.Method, "path", r.URL.Path)
+				s.httpError(w, http.StatusInternalServerError, "internal server error")
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 

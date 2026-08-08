@@ -20,10 +20,10 @@ build:
 run:
 	go run $(CMD) $(ARGS)
 
-## test: run all tests
+## test: run all tests with the race detector (needs cgo)
 .PHONY: test
 test:
-	go test $(PKG)
+	CGO_ENABLED=1 go test -race $(PKG)
 
 ## tidy: sync go.mod / go.sum
 .PHONY: tidy

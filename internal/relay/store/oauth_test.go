@@ -201,3 +201,34 @@ func TestSweepOAuthRemovesExpiredKeepsLive(t *testing.T) {
 		t.Errorf("live refresh swept away: %v", err)
 	}
 }
+
+func TestSweepOAuthPrunesAbandonedClients(t *testing.T) {
+	s := newStore(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+	pid, did := enrollDevice(t, s, "marco@example.com", now)
+	sweepAt := now.Add(oauthClientTTL + 30*time.Minute)
+
+	// abandoned: old, no refresh token → pruned.
+	abandoned, _ := s.RegisterClient([]string{"https://a/cb"}, "abandoned", now)
+	// active: old, but has a live refresh token → survives regardless of age.
+	active, _ := s.RegisterClient([]string{"https://b/cb"}, "active", now)
+	if err := s.CreateRefreshToken("rt", RefreshGrant{ClientID: active, PersonID: pid, DeviceID: did},
+		sweepAt.Add(time.Hour), now); err != nil {
+		t.Fatalf("CreateRefreshToken: %v", err)
+	}
+	// fresh: registered just before the sweep, inside the TTL window → survives.
+	fresh, _ := s.RegisterClient([]string{"https://c/cb"}, "fresh", sweepAt.Add(-10*time.Minute))
+
+	if _, err := s.SweepOAuth(sweepAt); err != nil {
+		t.Fatalf("SweepOAuth: %v", err)
+	}
+	if _, err := s.ClientByID(abandoned); !errors.Is(err, ErrClientUnknown) {
+		t.Errorf("abandoned client survived: err = %v, want ErrClientUnknown", err)
+	}
+	if _, err := s.ClientByID(active); err != nil {
+		t.Errorf("active client (has refresh token) was pruned: %v", err)
+	}
+	if _, err := s.ClientByID(fresh); err != nil {
+		t.Errorf("fresh client (within TTL) was pruned: %v", err)
+	}
+}

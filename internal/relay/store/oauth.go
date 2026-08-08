@@ -235,8 +235,19 @@ func (s *Store) ConsumeRefreshToken(token string, now time.Time) (RefreshGrant, 
 	return g, nil
 }
 
-// SweepOAuth deletes expired authorization codes and expired refresh tokens.
-// Called from the retention sweeper (T-09); returns rows removed, for logging.
+// oauthClientTTL bounds how long a DCR-registered client with no live refresh
+// token survives. An abandoned or never-completed registration is GC'd after
+// this; a client in active use always has a refresh token (renewed on rotation),
+// so it survives indefinitely, and a client whose refresh has merely lapsed just
+// re-runs DCR next time. This CAPS oauth_clients growth from the unauthenticated
+// /oauth/register endpoint (R-10); a fronting reverse-proxy rate limit (deploy
+// docs) is the complementary front-line that slows the rate of registration.
+const oauthClientTTL = 30 * 24 * time.Hour
+
+// SweepOAuth deletes expired authorization codes and refresh tokens, and prunes
+// abandoned DCR clients (older than oauthClientTTL and unreferenced by any
+// refresh token). Called from the retention sweeper (T-09); returns rows
+// removed, for logging.
 func (s *Store) SweepOAuth(now time.Time) (int64, error) {
 	var total int64
 	err := s.writeTx(func(tx *sql.Tx) error {
@@ -251,6 +262,20 @@ func (s *Store) SweepOAuth(now time.Time) (int64, error) {
 			n, _ := res.RowsAffected()
 			total += n
 		}
+		// Prune abandoned clients AFTER expired refresh tokens are gone, so an
+		// idle client whose only token just lapsed becomes eligible in the same
+		// pass. Active clients keep a live (unexpired) refresh token, so the
+		// NOT IN check protects them regardless of age.
+		res, err := tx.Exec(
+			`DELETE FROM oauth_clients
+			 WHERE created_at <= ?
+			   AND client_id NOT IN (SELECT client_id FROM oauth_refresh_tokens)`,
+			now.Add(-oauthClientTTL).Unix())
+		if err != nil {
+			return fmt.Errorf("store: sweep oauth: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		total += n
 		return nil
 	})
 	return total, err

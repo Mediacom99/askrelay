@@ -16,21 +16,22 @@ Thanks for your interest. askrelay is Apache-2.0, built in the open, and takes
 
 ## Development
 
-Requires **Go 1.26+**. `CGO_ENABLED=0` everywhere — the build stays a single
-static binary with no cgo.
+Requires **Go 1.26+**. The shipped binary builds with `CGO_ENABLED=0` (a single
+static binary, no cgo); the test target uses cgo because the race detector needs
+it.
 
 ```sh
 make build      # build ./askrelay
-make test       # go test -race ./...
+make test       # CGO_ENABLED=1 go test -race ./...
 make lint       # golangci-lint
 make tidy       # go mod tidy
 make overview   # regenerate docs/askrelay-overview.html (see below)
 make help       # list targets
 ```
 
-CI (`.github/workflows/ci.yml`) runs build, `go vet`, tests, and
-golangci-lint. Please make sure `make test` and `make lint` are green before
-opening a PR.
+CI (`.github/workflows/ci.yml`) runs the static (`CGO_ENABLED=0`) build, a
+cross-compile smoke, `go vet`, the race-enabled tests, and golangci-lint.
+Please make sure `make test` and `make lint` are green before opening a PR.
 
 ### Conventions
 

@@ -63,6 +63,18 @@ func (s *Server) serve(req *http.Request) *httptest.ResponseRecorder {
 	return rec
 }
 
+func TestRecoverPanic(t *testing.T) {
+	s := testServer(t)
+	h := s.recoverPanic(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/x", nil)) // must not propagate the panic
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+}
+
 func TestHealthz(t *testing.T) {
 	s := testServer(t)
 	rec := s.serve(httptest.NewRequest("GET", "/healthz", nil))
