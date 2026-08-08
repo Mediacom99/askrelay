@@ -3,9 +3,11 @@
 The relay is a single static binary (`CGO_ENABLED=0`) plus one SQLite file. TLS
 is the reverse proxy's job; the relay listens on localhost by default.
 
-> Status: WP-04 skeleton. `/healthz` and `POST /enroll/{token}` are live. The
-> MCP surface (`/mcp`), OAuth (`/oauth/*`), and the delivery WebSocket (`/ws`)
-> land in later work packages.
+> Status: the relay core is complete — `/healthz`, enrollment
+> (`POST /enroll/{token}`), the MCP surface (`/mcp`), the embedded OAuth 2.1
+> authorization server (`/oauth/*`, `/.well-known/*`), and the delivery
+> WebSocket (`/ws`) are all live. Release packaging (Docker image, prebuilt
+> binaries) is finalized in WP-14.
 
 ## Fresh-VPS walkthrough → "device enrolled"
 
@@ -56,11 +58,45 @@ Only the binary and a reverse proxy are required.
 Retention/freshness durations have a **1h floor** (T-09); `serve` refuses to
 start below it. Precedence is flag > env > default.
 
+## Rate limiting the OAuth endpoints (required for browser connectors)
+
+Dynamic Client Registration (`POST /oauth/register`) is **unauthenticated by the
+OAuth spec** — a client must be able to register before it holds any token. The
+relay caps the resulting growth (abandoned client rows are pruned after ~30 days,
+store `SweepOAuth`), but that only bounds the *total*; you **must** also
+rate-limit the endpoint at the proxy before exposing the browser-connector path
+publicly, or an anonymous caller can still churn registrations. Example (nginx):
+
+```nginx
+limit_req_zone $binary_remote_addr zone=oauth_reg:10m rate=6r/m;
+server {
+    location = /oauth/register {
+        limit_req zone=oauth_reg burst=3 nodelay;
+        proxy_pass http://127.0.0.1:8080;
+    }
+    location / { proxy_pass http://127.0.0.1:8080; }
+}
+```
+
+Caddy needs the `caddy-ratelimit` module (build with `xcaddy`); Traefik has a
+`rateLimit` middleware. Until the endpoint is rate-limited, keep the relay on
+localhost/LAN.
+
+## Backup
+
+Back up two things together:
+
+- **The SQLite database** — take a *consistent* snapshot, not a raw `cp` of a
+  live WAL-mode file: `sqlite3 askrelay.db ".backup '/backup/askrelay.db'"` (or
+  `VACUUM INTO`). It mostly holds *transient* messages by design (ephemeral
+  retention, arch §4.2).
+- **`signing.key`** (beside the DB) — the Ed25519 token-signing key. **Losing it
+  invalidates every device credential and access token** (everyone must
+  re-enroll); **leaking it enables token forgery / account takeover.** Back it up
+  encrypted and preserve its `0600` permissions.
+
 ## Files here
 
 - `askrelay.service` — systemd unit stub
 - `Dockerfile` — static build + minimal runtime image
 - `Caddyfile` — reverse-proxy + automatic TLS example
-
-Backup = copy the SQLite file — though it mostly holds *transient* messages by
-design (ephemeral retention, arch §4.2).
