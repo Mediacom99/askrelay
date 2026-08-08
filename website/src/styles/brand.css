@@ -1,0 +1,30 @@
+/* askrelay brand theme.
+   Base: dark navy #0A121D. Accents from the mark: relay blue + relay green.
+   Starlight recomputes its scale from these accent stops. First pass — tune freely. */
+:root {
+	/* relay blue accent (light theme) */
+	--sl-color-accent-low: #cfe0fb;
+	--sl-color-accent: #2f6fe0;
+	--sl-color-accent-high: #17356f;
+
+	/* brand palette exposed for diagrams / custom bits */
+	--ar-navy: #0a121d;
+	--ar-blue: #3b82f6;
+	--ar-green: #1fb98a;
+}
+
+:root[data-theme='dark'] {
+	--sl-color-accent-low: #17233b;
+	--sl-color-accent: #4f8bf2;
+	--sl-color-accent-high: #cfe0fb;
+	/* lean the dark surface toward the brand navy */
+	--sl-color-bg: #0a121d;
+	--sl-color-bg-nav: #0c1524;
+	--sl-color-bg-sidebar: #0c1524;
+}
+
+/* The mark already carries the wordmark weight; keep the title tight next to it. */
+.site-title {
+	font-weight: 650;
+	letter-spacing: -0.01em;
+}

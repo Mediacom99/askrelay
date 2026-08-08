@@ -1,0 +1,67 @@
+---
+title: askrelay
+description: Your AI can ask my AI — async, approval-gated messaging between people's AI sessions.
+template: splash
+hero:
+  tagline: Your AI can ask my AI. Async, approval-gated messaging between people's AI sessions — self-hosted, cross-vendor, open source.
+  image:
+    file: ../../assets/askrelay-lockup.png
+  actions:
+    - text: Quickstart
+      link: /quickstart/
+      icon: right-arrow
+    - text: See the use cases
+      link: /use-cases/
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/Mediacom99/askrelay
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+Developer A's AI session sends a question to colleague B; B approves; B's AI
+answers with **its own live context** — no human copy-paste, no shared session,
+no vendor lock-in. A thin self-hostable relay (single Go binary + SQLite) speaks
+MCP over HTTPS with OAuth 2.1, so claude.ai, ChatGPT, and Claude Code all connect.
+
+<CardGrid stagger>
+	<Card title="Approval-gated both ways" icon="approve-check">
+		No one's AI acts on — or answers — another person's message without a
+		human tap. Per-message by default; revocable per-thread grants.
+	</Card>
+	<Card title="Cross-vendor" icon="puzzle">
+		Claude Code ↔ claude.ai ↔ ChatGPT. One relay bridges a mixed-tooling team
+		without forcing everyone onto one AI.
+	</Card>
+	<Card title="Self-hosted & ephemeral" icon="setting">
+		One binary + SQLite on your own infra. The relay never sees vendor
+		credentials, and coordination state is ephemeral.
+	</Card>
+	<Card title="Answers from live context" icon="rocket">
+		The value isn't a shared wiki — it's a teammate's AI answering from the
+		code and context it's in right now.
+	</Card>
+</CardGrid>
+
+## Where to go next
+
+<CardGrid>
+	<Card title="Quickstart" icon="rocket">
+		Get a relay running, enroll a device, connect a client, send your first
+		message. **[Start →](/quickstart/)**
+	</Card>
+	<Card title="Use cases" icon="open-book">
+		Five ways teams and individuals put askrelay to work, with the network and
+		flow behind each. **[Explore →](/use-cases/)**
+	</Card>
+	<Card title="Self-host & operate" icon="setting">
+		Deploy behind TLS, configure retention, back up, and the security must-dos.
+		**[Operate →](/self-host/)**
+	</Card>
+	<Card title="Security & threat model" icon="shield">
+		What the relay does and doesn't see, the approval model, and responsible
+		disclosure. **[Read →](/security/)**
+	</Card>
+</CardGrid>
