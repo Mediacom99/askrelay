@@ -13,7 +13,11 @@ export default defineConfig({
 		starlight({
 			title: 'askrelay',
 			description: 'Your AI can ask my AI — async, approval-gated messaging between people’s AI sessions.',
-			logo: { src: './src/assets/askrelay-mark.png', alt: 'askrelay' },
+			logo: {
+				light: './src/assets/askrelay-mark-navy.png',
+				dark: './src/assets/askrelay-mark-white.png',
+				alt: 'askrelay',
+			},
 			favicon: '/favicons/favicon.ico',
 			customCss: ['./src/styles/brand.css'],
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/Mediacom99/askrelay' }],
