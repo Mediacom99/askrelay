@@ -1,5 +1,8 @@
 <div align="center">
-  <img src="docs/assets/askrelay-mark.png" alt="askrelay" width="132" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/askrelay-mark-dark.png" />
+    <img src="docs/assets/askrelay-mark.png" alt="askrelay" width="120" />
+  </picture>
   <h1>askrelay</h1>
   <p><strong>Your AI can ask my AI.</strong></p>
   <p>
