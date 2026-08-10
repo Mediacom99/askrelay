@@ -6,83 +6,58 @@
   <h1>askrelay</h1>
   <p><strong>Your AI can ask my AI.</strong></p>
   <p>
+    Async, approval-gated messaging between people's AI sessions — so a
+    teammate's AI can answer your AI's question <em>from its own live context</em>,
+    across vendors, on infrastructure you control.
+  </p>
+  <p>
     <a href="https://github.com/Mediacom99/askrelay/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Mediacom99/askrelay/actions/workflows/ci.yml/badge.svg" /></a>
     <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" /></a>
     <a href="go.mod"><img alt="Go 1.26" src="https://img.shields.io/badge/Go-1.26-00ADD8.svg" /></a>
-    <a href="#status"><img alt="status: early" src="https://img.shields.io/badge/status-early_(core_runs)-e0a800.svg" /></a>
     <a href="https://docs.askrelay.dev"><img alt="Docs" src="https://img.shields.io/badge/docs-docs.askrelay.dev-3b82f6.svg" /></a>
+    <a href="#status"><img alt="status: early" src="https://img.shields.io/badge/status-early_(core_runs)-e0a800.svg" /></a>
+    <a href="https://github.com/Mediacom99/askrelay/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/Mediacom99/askrelay?style=flat&color=e0a800" /></a>
   </p>
 </div>
 
-The self-hosted, cross-vendor messaging layer between AI sessions — where human
-approval is the product, not a checkbox. askrelay works **across vendors**
-(Claude Code ↔ ChatGPT ↔ Claude ↔ Codex), **across organizations**, and **on
-your own infrastructure**. It reaches what no shared-channel bot or org
-assistant can: the *live local context* of your colleague's session —
-uncommitted code, terminal state, private repos — because their own AI answers,
-in their own session, with their explicit approval.
+<!-- TODO(demo): a ~15-second terminal GIF / asciinema — one session asks a question,
+     the other approves, the answer streams back. Drop it here; a demo is the single
+     biggest star-driver for a repo like this. -->
 
-Concretely: your Claude Code session hits a question only your colleague can
-answer (*"why does the auth service special-case tenant IDs?"*). Instead of you
-writing a Slack message, your session sends the question to your colleague *as a
-person*. It waits in their inbox. They tap approve; their AI — with their code,
-their context — drafts the answer; they review it; your session gets it. Nobody
-copy-pastes anything.
+Your AI hits a question only a colleague can answer — *"why does the auth
+service special-case tenant IDs?"* The answer lives in their repo, their
+terminal, their head; none of which your session can see. So today you paste it
+into Slack and wait.
 
-## Status
+askrelay sends the question to your colleague **as a person**. It lands in their
+inbox. They tap approve; their AI drafts the answer **from their live local
+context**; they review it; your session gets it back. Nobody copy-pastes
+anything, nobody shares a session — and it works even when you're on Claude Code
+and they're on ChatGPT.
 
-**Early — the core runs and the front door is in.** Built plan-first, work
-package by work package (see the [implementation plan](docs/askrelay-implementation-plan.md)).
-The relay does the whole cross-person job today, and the embedded OAuth 2.1
-authorization server that lets *off-the-shelf* clients connect (no dev token) is
-now built. What's left is validating each vendor's connector live (S-04) and
-shipping packaged releases.
+## Why askrelay
 
-| | |
-|---|---|
-| ✅ **Works today** | The relay binary (`serve`, `invite`, device enrollment); the full approval-gated message loop over MCP (`send_message` → spotlighted inbox → approve → deliver → reply); Ed25519-signed envelopes; the two-way approval gate + revocable per-thread grants; WebSocket delivery, push + ack, and ephemeral retention; the full **OAuth 2.1 stack** — resource server (bearer validation) *and* embedded authorization server (authorize/token with PKCE, DCR + CIMD client registration, JWKS); client-side secret **redaction** (visible markers + a fail-closed hook). Exercised by an `-race` test suite and a local dev harness. |
-| 🚧 **Next** | Live per-client connector validation — claude.ai / ChatGPT / Claude Code each completing OAuth against a real relay (S-04, WP-13); the Claude Code **daemon** — instant push + in-terminal approvals (WP-09); human-facing **CLI verbs** — inbox / approve / device / status (WP-12); packaged **releases** — Docker, GoReleaser, brew (WP-14). |
+- **Cross-vendor.** Claude Code ↔ ChatGPT ↔ Claude ↔ Codex. One relay bridges a
+  mixed-tooling team; nobody has to switch AIs.
+- **Answers from live context.** Not a shared wiki — a teammate's AI answering
+  from the code and terminal it's in *right now*, including private repos and
+  uncommitted work your session can't reach.
+- **Approval in both directions.** Inbound messages are untrusted until the
+  recipient approves them; AI-drafted replies are reviewed before they leave.
+  Ongoing exchange? Grant per-thread auto-approval — revocable, and every
+  grant-derived action is logged.
+- **Self-hosted.** One Go binary + a SQLite file, speaking MCP over HTTPS with a
+  built-in OAuth 2.1 server, so browser clients connect zero-install. Your
+  messages live on your infrastructure — and only briefly: deleted after delivery.
+- **Security by construction.** Signed envelopes, inbound quarantine, no
+  tool-triggering, no auto-fetched links, no ML "guardrail" theater.
 
-So today askrelay is real, self-hostable, and connectable over OAuth; the
-remaining milestone is proving each vendor's connector end-to-end and shipping
-packaged releases so a colleague can set it up unaided.
+## Inbound is data, not instructions
 
-## How it works
-
-```
- you (asker)                      relay                     colleague (answerer)
- Claude Code ── send_message ──► inbox ── push/pull ──► their session
-                                   │                        │ approve ✓
- your session ◄── reply ────────── ◄──── review ✓ ────  their AI answers
-```
-
-- **It's a mailbox, not a chat room.** Messages address a *person* and wait
-  durably; delivery is honest per client — instant push into Claude Code (via
-  the optional daemon), "next time they prompt" on claude.ai/ChatGPT, because
-  those platforms are pull-only for external systems. We document that instead
-  of pretending otherwise.
-- **Approval in both directions.** Inbound messages are untrusted data until the
-  recipient approves them; outgoing AI-drafted replies are reviewed before they
-  leave. For an ongoing exchange, either side can grant auto-approval on just
-  that thread — revocable, and every grant-derived action is logged.
-- **Also works solo, across identities.** Your own agents — laptop, desktop,
-  homelab — can message each other through the same inbox; sender and recipient
-  just happen to both be you.
-- **One small relay, self-hosted.** A single Go binary with a SQLite file. It
-  speaks MCP directly over HTTPS with an embedded OAuth 2.1 server, so claude.ai
-  and ChatGPT connect with zero local install; an optional daemon (planned) will
-  upgrade Claude Code with push and in-terminal approvals. Your messages live on
-  your infrastructure — and only briefly: the relay deletes them after delivery.
-
-Architecture diagrams: [`docs/askrelay-architecture-diagrams.md`](docs/askrelay-architecture-diagrams.md).
-Full design: [`docs/askrelay-architecture.md`](docs/askrelay-architecture.md).
-
-## See it work
-
-When a message is delivered, the recipient's AI never sees raw sender text — it
-sees a **tamper-evident quarantine block** (fresh nonce, provenance line,
-data-not-instructions preamble). This is the actual output of `check_inbox`
-after one person asks another:
+Cross-person AI messaging is a textbook prompt-injection surface. So a delivered
+message is never handed to the recipient's AI as raw text — it arrives in a
+tamper-evident quarantine block (fresh nonce, provenance line, a
+data-not-instructions preamble). This is the actual output of `check_inbox`:
 
 ````
 ```
@@ -95,114 +70,67 @@ Hey Bob — is the staging deploy green?
 ```
 ````
 
-That wrapper is the front line against prompt injection — see
-[Security](#security-is-the-headline-feature).
+That wrapper is the front line against prompt injection. Full threat model and
+posture: [SECURITY.md](SECURITY.md) and the [docs](https://docs.askrelay.dev).
 
 ## Quickstart
 
-Requires **Go 1.26+**. `CGO_ENABLED=0` everywhere; the result is a single static
-binary.
+Go 1.26+; the result is a single static binary.
 
 ```sh
-git clone https://github.com/Mediacom99/askrelay
-cd askrelay
-make build            # → ./askrelay   (or: make test / make lint)
+git clone https://github.com/Mediacom99/askrelay && cd askrelay
+make build
 
-# run the relay (TLS is your reverse proxy's job; see docs/deploy/)
+# run the relay (TLS is your reverse proxy's job)
 ./askrelay serve --db /tmp/askrelay.db --base-url http://127.0.0.1:8080 &
 
-curl -s http://127.0.0.1:8080/healthz            # {"status":"ok",...}
-./askrelay invite colleague@your.team \
-  --db /tmp/askrelay.db --base-url http://127.0.0.1:8080   # prints an invite link
+# invite a colleague — send them the printed link out of band
+./askrelay invite colleague@example.com --db /tmp/askrelay.db --base-url http://127.0.0.1:8080
 ```
 
-A client obtains an access token through the embedded OAuth flow (add the relay
-URL as a connector, then paste your device credential at the login page — see
-[Client support](#client-support)). Live validation against each vendor's
-connector is still in progress (S-04); the full loop is also covered by the
-`-race` test suite (`make test`) and a local dev harness.
+Connecting claude.ai / ChatGPT / Claude Code, self-hosting behind TLS, and the
+full security model all live at **[docs.askrelay.dev](https://docs.askrelay.dev)**.
 
-## Client support
+## Status
 
-The OAuth login flow has landed, so these clients connect to a relay by URL
-(authenticating with a device credential). Live end-to-end validation of each
-vendor's connector is the remaining step (S-04); the daemon rows await WP-09:
+Early, and honest about it. The relay does the whole cross-person job today;
+what remains is validating each vendor's connector live and packaging releases.
 
-| Client | Ask | Answer | Sees your question |
-|---|---|---|---|
-| Claude Code (+ daemon) | ✅ | ✅ | seconds (push) or next prompt (hooks) |
-| Claude Code (remote-only) | ✅ | ✅ | on inbox check / long-poll |
-| Codex CLI (via the local daemon) | ✅ | ✅ | on next tool call |
-| claude.ai / Claude Desktop | ✅ | ✅ | next time they prompt |
-| ChatGPT (web connector) | ✅ | ✅ | next time they prompt; plan-gating applies |
-| ChatGPT mobile | ❌ | ❌ | no custom connectors |
+- **Works now** — the relay (`serve`, `invite`, device enrollment); the full
+  approval-gated loop over MCP (`send_message` → spotlighted inbox → approve →
+  deliver → reply); Ed25519-signed envelopes + the two-way gate + revocable
+  per-thread grants; WebSocket delivery with push + ack and ephemeral retention;
+  the full **OAuth 2.1** stack — resource server *and* embedded authorization
+  server (authorize/token with PKCE, DCR + CIMD, JWKS); client-side secret
+  redaction. Covered by a race-enabled test suite and a local dev harness.
+- **Next** — live per-client connector validation (claude.ai / ChatGPT / Claude
+  Code each completing OAuth against a real relay); the Claude Code **daemon**
+  (instant push + in-terminal approvals); human-facing **CLI verbs** (inbox /
+  approve / device / status); packaged **releases** (Docker, GoReleaser, brew).
 
-The asymmetry is a platform fact (see the [research](docs/research/README.md)),
-not a bug: askrelay is async-first, so "answer whenever your colleague is back"
-is the product, not a failure mode.
+## Contribute & follow along
 
-## Security is the headline feature
+askrelay is Apache-2.0, [DCO](https://developercertificate.org/) sign-off,
+**no CLA — ever**. It's built in the open, plan-first.
 
-Cross-person AI messaging is a textbook prompt-injection and data-leakage
-surface — the [security brief](docs/research/security.md) walks the 2025–26
-incident history that shaped this design. askrelay's answers, by construction:
-
-- **Inbound content is data.** Rendered in tamper-evident quarantine blocks (see
-  above), never able to trigger tools, never auto-fetched — links stay plain
-  text.
-- **Ed25519-signed envelopes** from per-device keys. Origin is verifiable, and
-  verification never implies trust: the gates apply to everyone. A revoked
-  device is cut off immediately — including live WebSocket sockets.
-- **Built-in secret redaction** on outgoing messages (cloud keys, tokens, PEM
-  blocks, `.env` lines) with visible markers, plus a fail-closed hook for your
-  own patterns.
-- **Ephemeral retention.** The relay deletes message bodies after delivery
-  acknowledgment; approval/grant audit records outlive them.
-- **No ML "guardrail" classifiers** giving false confidence — architectural
-  controls and honest documentation instead.
-
-Full threat model: architecture §8. Report a vulnerability: [SECURITY.md](SECURITY.md).
-
-## Self-hosting (the flagship path)
-
-One binary + any HTTPS reverse proxy. Examples for Caddy, Docker, and systemd
-live in [`docs/deploy/`](docs/deploy/).
-
-```sh
-askrelay serve --db /data/askrelay.db --base-url https://relay.your.team
-askrelay invite colleague@your.team      # send them the link, out of band
-```
-
-Colleagues on claude.ai/ChatGPT paste the relay URL as a custom connector and
-authorize with a device credential (the OAuth path is built); Claude Code users
-will optionally run the daemon for push once it lands (WP-09). Before exposing
-the browser path publicly, rate-limit `/oauth/register` at your proxy — see
-[`docs/deploy/`](docs/deploy/).
+- ⭐ **Star the repo** if the idea resonates — that signal is what tells us to
+  keep building this in the open.
+- **[Discussions](https://github.com/Mediacom99/askrelay/discussions)** — ideas,
+  questions, and the use cases you'd want it for.
+- **Roadmap** — the [implementation plan](docs/askrelay-implementation-plan.md)
+  is the live work-package list; new contributors, start with the
+  [good first issues](https://github.com/Mediacom99/askrelay/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+- **Build & test** — `make build` · `make test` · `make lint`; sign commits with
+  `git commit -s`. See [CONTRIBUTING.md](CONTRIBUTING.md), and the
+  "relay core stays Apache-2.0" promise in [GOVERNANCE.md](GOVERNANCE.md).
 
 ## Documentation
 
 **User & operator guide → [docs.askrelay.dev](https://docs.askrelay.dev)** —
-quickstart, connecting a client, self-hosting, concepts, and security. The
-tables below are the in-repo *design* docs — the reasoning behind the code:
+quickstart, connecting a client, self-hosting, concepts, and security.
 
-| Document | What it is |
-|---|---|
-| [Architecture](docs/askrelay-architecture.md) | design source of truth |
-| [Diagrams](docs/askrelay-architecture-diagrams.md) | system + flow diagrams |
-| [Implementation plan](docs/askrelay-implementation-plan.md) | work packages, verified dependency pins, risks, learnings |
-| [Decision log](docs/phase2-decision-log.md) | every product decision, with verdicts |
-| [Research briefs](docs/research/README.md) | live-verified evidence (MCP, A2A, ChatGPT/Claude surfaces, security incidents, prior art) |
-
-## Contributing
-
-Apache-2.0, [DCO](https://developercertificate.org/) sign-off, **no CLA — ever**.
-Governance and the "relay core stays Apache-2.0" promise live in
-[GOVERNANCE.md](GOVERNANCE.md); how to build, test, and where to start are in
-[CONTRIBUTING.md](CONTRIBUTING.md). The project is built plan-first — work
-packages, dependency pins, and the session protocol are in the
-[implementation plan](docs/askrelay-implementation-plan.md). Issues and design
-discussion are welcome now; the core through WP-08 has landed, so code PRs
-against the current work packages are fair game.
-
-askrelay's first users are the team at [Kosmoy](https://www.kosmoy.com) — built
-in the open from day one.
+In-repo design docs (the reasoning behind the code):
+[architecture](docs/askrelay-architecture.md) ·
+[implementation plan](docs/askrelay-implementation-plan.md) ·
+[decision log](docs/phase2-decision-log.md) ·
+[research briefs](docs/research/README.md).
