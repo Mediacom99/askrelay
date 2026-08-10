@@ -1,6 +1,0 @@
-# Cloudflare Pages config for the askrelay docs site (static Astro output).
-# Primary deploy path is the dashboard Git integration (see README.md), which
-# gives automatic per-PR preview URLs. This file only enables the CLI/CI path:
-#   npx wrangler pages deploy dist
-name = "askrelay-docs"
-pages_build_output_dir = "./dist"
