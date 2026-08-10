@@ -9,14 +9,19 @@
 Recommended README header:
 
 ```html
-<p align="center">
-  <img src="./assets/askrelay-mark-256.png" alt="askrelay" width="128">
-</p>
-<h1 align="center">askrelay</h1>
-<p align="center"><strong>Your AI can ask my AI.</strong></p>
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/askrelay-mark-dark.png" />
+    <img src="docs/assets/askrelay-mark.png" alt="askrelay" width="120" />
+  </picture>
+  <h1>askrelay</h1>
+  <p><strong>Your AI can ask my AI.</strong></p>
+</div>
 ```
 
-Copy `readme/askrelay-mark-256.png` to `assets/askrelay-mark-256.png`, or adjust the path.
+The `<picture>` swaps the navy mark (light theme) for the white mark
+(`askrelay-mark-dark.png`) on GitHub's dark theme — the transparent pigeon reads
+on both. The mark is the messenger pigeon whose wing doubles as a forward arrow.
 
 ## Website `<head>`
 
