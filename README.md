@@ -10,6 +10,7 @@
     <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache_2.0-blue.svg" /></a>
     <a href="go.mod"><img alt="Go 1.26" src="https://img.shields.io/badge/Go-1.26-00ADD8.svg" /></a>
     <a href="#status"><img alt="status: early" src="https://img.shields.io/badge/status-early_(core_runs)-e0a800.svg" /></a>
+    <a href="https://docs.askrelay.dev"><img alt="Docs" src="https://img.shields.io/badge/docs-docs.askrelay.dev-3b82f6.svg" /></a>
   </p>
 </div>
 
@@ -30,18 +31,21 @@ copy-pastes anything.
 
 ## Status
 
-**Early — the core runs; the front door doesn't yet.** Built plan-first, work
+**Early — the core runs and the front door is in.** Built plan-first, work
 package by work package (see the [implementation plan](docs/askrelay-implementation-plan.md)).
-The relay does the whole cross-person job today; what's missing is the login
-flow that lets *off-the-shelf* clients connect without a dev token.
+The relay does the whole cross-person job today, and the embedded OAuth 2.1
+authorization server that lets *off-the-shelf* clients connect (no dev token) is
+now built. What's left is validating each vendor's connector live (S-04) and
+shipping packaged releases.
 
 | | |
 |---|---|
-| ✅ **Works today** | The relay binary (`serve`, `invite`, device enrollment); the full approval-gated message loop over MCP (`send_message` → spotlighted inbox → approve → deliver → reply); Ed25519-signed envelopes; the two-way approval gate + revocable per-thread grants; WebSocket delivery, push + ack, and ephemeral retention; the OAuth **resource** server (bearer validation). Exercised by an `-race` test suite and a local dev harness. |
-| 🚧 **Next** | OAuth **authorization** server so real ChatGPT / Claude / Claude Code connect with no dev token (WP-06); the Claude Code **daemon** — push + in-terminal approvals (WP-09); client-side secret **redaction** (WP-11); packaged **releases** + end-to-end golden flows (WP-13/14). |
+| ✅ **Works today** | The relay binary (`serve`, `invite`, device enrollment); the full approval-gated message loop over MCP (`send_message` → spotlighted inbox → approve → deliver → reply); Ed25519-signed envelopes; the two-way approval gate + revocable per-thread grants; WebSocket delivery, push + ack, and ephemeral retention; the full **OAuth 2.1 stack** — resource server (bearer validation) *and* embedded authorization server (authorize/token with PKCE, DCR + CIMD client registration, JWKS); client-side secret **redaction** (visible markers + a fail-closed hook). Exercised by an `-race` test suite and a local dev harness. |
+| 🚧 **Next** | Live per-client connector validation — claude.ai / ChatGPT / Claude Code each completing OAuth against a real relay (S-04, WP-13); the Claude Code **daemon** — instant push + in-terminal approvals (WP-09); human-facing **CLI verbs** — inbox / approve / device / status (WP-12); packaged **releases** — Docker, GoReleaser, brew (WP-14). |
 
-So today askrelay is real and demonstrable, but not yet something a colleague
-can connect their ChatGPT to unaided. That's the next milestone.
+So today askrelay is real, self-hostable, and connectable over OAuth; the
+remaining milestone is proving each vendor's connector end-to-end and shipping
+packaged releases so a colleague can set it up unaided.
 
 ## How it works
 
@@ -65,10 +69,10 @@ can connect their ChatGPT to unaided. That's the next milestone.
   homelab — can message each other through the same inbox; sender and recipient
   just happen to both be you.
 - **One small relay, self-hosted.** A single Go binary with a SQLite file. It
-  speaks MCP directly over HTTPS, so claude.ai and ChatGPT will connect with
-  zero local install; an optional daemon upgrades Claude Code with push and
-  in-terminal approvals. Your messages live on your infrastructure — and only
-  briefly: the relay deletes them after delivery.
+  speaks MCP directly over HTTPS with an embedded OAuth 2.1 server, so claude.ai
+  and ChatGPT connect with zero local install; an optional daemon (planned) will
+  upgrade Claude Code with push and in-terminal approvals. Your messages live on
+  your infrastructure — and only briefly: the relay deletes them after delivery.
 
 Architecture diagrams: [`docs/askrelay-architecture-diagrams.md`](docs/askrelay-architecture-diagrams.md).
 Full design: [`docs/askrelay-architecture.md`](docs/askrelay-architecture.md).
@@ -112,16 +116,17 @@ curl -s http://127.0.0.1:8080/healthz            # {"status":"ok",...}
   --db /tmp/askrelay.db --base-url http://127.0.0.1:8080   # prints an invite link
 ```
 
-Driving the live message loop end-to-end currently needs a client that can
-obtain an access token — the OAuth login flow (WP-06) or the daemon (WP-09),
-both in progress. Until then the loop is covered by the test suite
-(`make test`) and a local dev harness.
+A client obtains an access token through the embedded OAuth flow (add the relay
+URL as a connector, then paste your device credential at the login page — see
+[Client support](#client-support)). Live validation against each vendor's
+connector is still in progress (S-04); the full loop is also covered by the
+`-race` test suite (`make test`) and a local dev harness.
 
-## Client support (planned)
+## Client support
 
-The target matrix once the login flow and daemon land. **Today, none connect
-off-the-shelf yet** — this is the design the remaining work packages build
-toward:
+The OAuth login flow has landed, so these clients connect to a relay by URL
+(authenticating with a device credential). Live end-to-end validation of each
+vendor's connector is the remaining step (S-04); the daemon rows await WP-09:
 
 | Client | Ask | Answer | Sees your question |
 |---|---|---|---|
@@ -149,8 +154,8 @@ incident history that shaped this design. askrelay's answers, by construction:
   verification never implies trust: the gates apply to everyone. A revoked
   device is cut off immediately — including live WebSocket sockets.
 - **Built-in secret redaction** on outgoing messages (cloud keys, tokens, PEM
-  blocks, `.env` lines) with visible markers, plus a hook for your own patterns.
-  *(Ships with WP-11.)*
+  blocks, `.env` lines) with visible markers, plus a fail-closed hook for your
+  own patterns.
 - **Ephemeral retention.** The relay deletes message bodies after delivery
   acknowledgment; approval/grant audit records outlive them.
 - **No ML "guardrail" classifiers** giving false confidence — architectural
@@ -168,11 +173,17 @@ askrelay serve --db /data/askrelay.db --base-url https://relay.your.team
 askrelay invite colleague@your.team      # send them the link, out of band
 ```
 
-Colleagues on claude.ai/ChatGPT will paste the relay URL as a custom connector;
-Claude Code users will optionally run the daemon for push. (Those client paths
-arrive with WP-06/WP-09 — see [Status](#status).)
+Colleagues on claude.ai/ChatGPT paste the relay URL as a custom connector and
+authorize with a device credential (the OAuth path is built); Claude Code users
+will optionally run the daemon for push once it lands (WP-09). Before exposing
+the browser path publicly, rate-limit `/oauth/register` at your proxy — see
+[`docs/deploy/`](docs/deploy/).
 
 ## Documentation
+
+**User & operator guide → [docs.askrelay.dev](https://docs.askrelay.dev)** —
+quickstart, connecting a client, self-hosting, concepts, and security. The
+tables below are the in-repo *design* docs — the reasoning behind the code:
 
 | Document | What it is |
 |---|---|
