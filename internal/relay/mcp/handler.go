@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -70,6 +72,8 @@ func (h *Handler) HTTPHandler() http.Handler {
 // serverFor builds a per-request server with every tool bound to person.
 func (h *Handler) serverFor(person, clientType string) *sdkmcp.Server {
 	s := sdkmcp.NewServer(&sdkmcp.Implementation{Name: "askrelay", Version: h.version}, nil)
+	s.AddReceivingMiddleware(h.logToolCalls(person))
+	h.addFindPeople(s, person)
 	h.addCheckInbox(s, person)
 	h.addGetThread(s, person)
 	h.addWaitForActivity(s, person, clientType)
@@ -78,6 +82,38 @@ func (h *Handler) serverFor(person, clientType string) *sdkmcp.Server {
 	h.addSendMessage(s, person)
 	h.addOutboundVerdicts(s, person)
 	return s
+}
+
+// logToolCalls is a receiving middleware that logs one INFO line per tools/call:
+// the tool name (a shape), the bound person (an id), the outcome, and duration —
+// so the boundary access log's identical "POST /mcp" lines become legible. It
+// NEVER logs the arguments (they carry message content, T-18); only the name.
+// person is bound from serverFor (the per-request authenticated identity), so no
+// context extraction is needed.
+func (h *Handler) logToolCalls(person string) sdkmcp.Middleware {
+	return func(next sdkmcp.MethodHandler) sdkmcp.MethodHandler {
+		return func(ctx context.Context, method string, req sdkmcp.Request) (sdkmcp.Result, error) {
+			if method != "tools/call" {
+				return next(ctx, method, req) // skip initialize/tools-list/etc.
+			}
+			tool := ""
+			if p, ok := req.GetParams().(*sdkmcp.CallToolParamsRaw); ok {
+				tool = p.Name // raw params at the receiving layer; .Name only, never .Arguments (T-18)
+			}
+			start := time.Now()
+			res, err := next(ctx, method, req)
+			status := "ok"
+			if err != nil {
+				status = "error"
+			} else if r, ok := res.(*sdkmcp.CallToolResult); ok && r.IsError {
+				status = "tool_error"
+			}
+			h.log.Info("mcp tool call",
+				"tool", tool, "person", person, "status", status,
+				"dur_ms", time.Since(start).Milliseconds())
+			return res, err
+		}
+	}
 }
 
 // emptyResult / textResult return a NON-nil Content so go-sdk does not auto-fill

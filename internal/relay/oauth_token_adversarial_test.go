@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -116,15 +117,18 @@ func TestTokenCrossClientAndRedirectMismatchRejected(t *testing.T) {
 	}
 }
 
-// TestTokenCIMDRedirectPathSwapRejected: even though resolveClient's CIMD
-// same-origin check accepts ANY path on the client's own origin at
-// /authorize, the code is bound to the EXACT redirect_uri string used there.
-// A different (but still same-origin-valid) path must not redeem it.
+// TestTokenCIMDRedirectPathSwapRejected: both callbacks are listed in the CIMD
+// document, so either is a valid redirect at /authorize — but the code is bound
+// to the EXACT redirect_uri string used there, so the other listed callback must
+// not redeem it.
 func TestTokenCIMDRedirectPathSwapRejected(t *testing.T) {
 	s := testServer(t)
-	const clientID = "https://chatgpt.com/.well-known/oauth-client"
-	const redirectA = "https://chatgpt.com/callback-a"
-	const redirectB = "https://chatgpt.com/callback-b"
+	const clientID = "https://claude.ai/oauth/claude-code-client-metadata"
+	const redirectA = "http://localhost/callback-a"
+	const redirectB = "http://localhost/callback-b"
+	s.fetchCIMD = func(context.Context, string) (*clientMetadata, error) {
+		return &clientMetadata{ClientID: clientID, RedirectURIs: []string{redirectA, redirectB}}, nil
+	}
 	_, _, cred := enrolledCredential(t, s)
 
 	form := authzQuery(clientID, redirectA)

@@ -195,10 +195,15 @@ server (mcp.md). The relay embeds the minimum honest implementation:
 - An embedded authorization server (authorization-code + PKCE): the "login
   page" is *enter your invite token / device credential* — accounts exist only
   via §4.3 enrollment. No passwords, no self-signup.
-- Client registration: Client ID Metadata Documents (ChatGPT's path) and
-  Dynamic Client Registration (claude.ai's path) both accepted (mcp.md;
-  DCR is deprecated in the draft spec but required by today's clients —
-  tracked as a plan risk).
+- Client registration: Client ID Metadata Documents and Dynamic Client
+  Registration both accepted (mcp.md; DCR is deprecated in the draft spec but
+  required by today's clients — tracked as a plan risk). CIMD now **fetches and
+  validates** the metadata document (S-04 done): an SSRF-guarded GET (dial-time
+  IP denylist incl. loopback/private/link-local/CGNAT, no proxy, size/type/time
+  caps, short cache + concurrency bound), requiring the document to self-declare
+  the same `client_id` and to list the `redirect_uri` (exact, or
+  loopback-port-agnostic per RFC 8252 §7.3 — Claude Code CLI's ephemeral
+  loopback callback). This replaces the earlier same-origin-only stub.
 - Tokens identify the *person* (and originating client type, used for the §5.4
   profiles). Per-user state is keyed on identity, never on MCP session IDs —
   required anyway for stateless operation (the 2026-07-28 revision removes
@@ -229,17 +234,27 @@ Verb-shaped, few, and boring — every client must be able to call them cold
 
 | Tool | R/W | Purpose |
 |---|---|---|
-| `send_message(to, text, thread?)` | W | Ask or reply. Runs the outbound gate (§5.3): returns `pending_review` unless a grant covers the thread. |
-| `check_inbox()` | R | Everything awaiting me: messages to approve, replies that arrived, drafts awaiting my outbound review. The workhorse for pull-only clients. |
-| `get_thread(thread_id)` | R | Full thread (spotlighted — §5.2). |
-| `approve_message(id)` / `decline_message(id)` | W | Inbound gate verdict from within a session (D-03). |
-| `approve_reply(id, edited_text?)` / `discard_reply(id)` | W | Outbound gate verdict (D-11); optional human edit before release. |
+| `find_people()` | R | Roster directory — email + display name of everyone you can message, so a plain name resolves to an address for `send_message`. Roster data, returned structurally (not spotlighted); self-asserted names are sanitized at enrollment. Not an external search/fetch alias (see below). |
+| `send_message(to, text, thread?)` | W | Ask or reply. Runs the outbound gate (§5.3): returns `pending_review` unless a grant covers the thread. Echoes the queued text so the human reviews exactly what will send. |
+| `check_inbox()` | R | Everything awaiting me: messages to approve, replies that arrived, drafts awaiting my outbound review. Inbound bodies are returned spotlighted (§5.2), the caller's own draft bodies plain. The workhorse for pull-only clients. |
+| `get_thread(thread_id)` | R | Full thread: message bodies spotlighted (§5.2), the caller's own drafts plain. |
+| `approve_message(id)` / `decline_message(id)` | W | Inbound gate verdict from within a session (D-03). Records the **human's** explicit decision — the tool descriptions instruct the model not to self-approve; robust enforcement is the WP-09 daemon's out-of-band approval. |
+| `approve_reply(id, edited_text?)` / `discard_reply(id)` | W | Outbound gate verdict (D-11); optional human edit before release. Same human-explicit-approval discipline as the inbound verdict. |
 | `set_thread_grant(thread_id, direction, enabled)` | W | Revocable per-thread auto-approve, `inbound` / `outbound` (D-03, D-11). Logged. |
 | `wait_for_activity(timeout_seconds)` | R | Long-poll; server caps by client profile (§5.4). The daemon uses the WebSocket instead. |
 
-No search/fetch alias tools in v1: ChatGPT no longer requires them for chat
-connectors (chatgpt-extension.md, verified correction); deep-research
-compatibility is a v1.1 question.
+Tool results carry bodies in **`structuredContent`**, not only a text block:
+Claude Code (and other structured-first clients) surface only the structured
+half, so a body placed only in a content block is invisible to the model.
+Inbound (untrusted) bodies keep their full spotlight framing inside that
+structured field (§5.2); the caller's own drafts are plain (trusted). Per-tool
+INFO logging records the tool name + person + outcome (a shape/id, T-18), so the
+`POST /mcp` access lines are legible.
+
+No **external** search/fetch alias tools in v1: ChatGPT no longer requires them
+for chat connectors (chatgpt-extension.md, verified correction); deep-research
+compatibility is a v1.1 question. `find_people` is an internal roster lookup,
+not such an alias.
 
 ### 5.2 Spotlighting (D-10)
 
@@ -323,7 +338,9 @@ otherwise (T-entry); no interactive TUI (D-05).
   address, database path, public base URL, retention knobs, invite TTL.
 - **Daemon/user config**: JSON at `~/.config/askrelay/config.json` (0600),
   written by `enroll` — relay URL, person, device-key path. The private key
-  lives beside it (0600) in v1; OS keychain integration is v1.1.
+  lives beside it (0600) in v1; OS keychain integration is v1.1. `enroll` also
+  takes an optional `-name` (a display name shown to others via `find_people`;
+  sanitized server-side — capped, control-stripped, URL-defanged).
 
 ## 8. Security & threat model
 

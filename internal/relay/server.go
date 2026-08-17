@@ -31,6 +31,11 @@ type Server struct {
 	// bearer guards protected routes with access-token validation (WP-05); the
 	// /mcp route is wrapped with it in NewServer.
 	bearer func(http.Handler) http.Handler
+	// fetchCIMD fetches a Client ID Metadata Document (WP-06/S-04). A field, not a
+	// direct call, so tests inject a fake: the SSRF guard blocks the loopback
+	// address an httptest server listens on, so the CIMD path can't be exercised
+	// over real HTTP in a unit test.
+	fetchCIMD func(context.Context, string) (*clientMetadata, error)
 }
 
 // NewServer wires the routes; it does not listen. store, issuer, and log must
@@ -38,7 +43,9 @@ type Server struct {
 func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger) *Server {
 	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux(), hub: newHub()}
 	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL, log)
+	s.fetchCIMD = newCIMDFetcher().get
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("GET /brand/{name}", s.handleBrand)
 	s.mux.HandleFunc("POST /enroll/{token}", s.handleEnroll)
 	s.mux.Handle("GET "+oauth.PRMPath, oauth.ProtectedResourceMetadataHandler(cfg.BaseURL))
 	s.mux.HandleFunc("GET "+oauth.AuthServerMetaPath, s.handleASMetadata)

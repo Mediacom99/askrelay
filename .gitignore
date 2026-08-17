@@ -10,6 +10,11 @@
 *.test
 *.out
 
+# Local relay database (created by `serve` with the default -db in the working dir)
+/askrelay.db
+/askrelay.db-shm
+/askrelay.db-wal
+
 # Test & coverage artifacts
 coverage.out
 coverage.html
@@ -40,6 +45,8 @@ Thumbs.db
 .claude/memory/
 .claude/settings.local.json
 /askrelay-checkpoint.html
+# /test/ is a throwaway A→B→A message-passing harness (relay db + client configs)
+/test/
 
 # Dev-only harness (build tag `dev`, uncommitted)
 /devharness

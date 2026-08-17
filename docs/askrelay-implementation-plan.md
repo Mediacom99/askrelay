@@ -18,13 +18,13 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-03 | `internal/relay/store` — SQLite persistence | DONE | WP-01 | T-03 T-09 |
 | WP-04 | relay HTTP skeleton + enrollment | DONE | WP-03 | T-11 T-14 T-15 |
 | WP-05 | relay OAuth: resource server + tokens | DONE | WP-04 | T-06 |
-| WP-06 | relay OAuth: embedded AS + client registration — AS "login" is device-credential paste (Option A, D-24); CIMD same-origin-only pending S-04 | DONE (PR #11) | WP-05 | T-06 |
+| WP-06 | relay OAuth: embedded AS + client registration — AS "login" is device-credential paste (Option A, D-24); CIMD now fetch+validate (SSRF-guarded), validated against a real Claude Code client 2026-08 | DONE (PR #11, amended) | WP-05 | T-06 |
 | WP-07 | relay MCP surface (tools + spotlighting) | DONE | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
 | WP-08 | WS hub, delivery, retention sweeper | DONE | WP-03 WP-04 | T-04 T-09 |
 | WP-09 | daemon core (enroll, queue, stdio MCP) | TODO | WP-01 WP-07 WP-08 WP-11 | T-11 |
 | WP-10 | daemon ↔ Claude Code push (channels + hooks) | TODO | WP-09 | S-01 |
 | WP-11 | `internal/redact` — secret redaction | DONE | — | T-12 |
-| WP-12 | CLI verbs (inbox, approve, device, status) | TODO | WP-04 WP-08 | T-05 |
+| WP-12 | CLI verbs — `enroll` + `device list\|revoke` DONE; `inbox`, `approve`, `status` TODO | partial | WP-04 WP-08 | T-05 |
 | WP-13 | end-to-end harness + golden flows | TODO | WP-06 WP-07 WP-08 WP-09 | — |
 | WP-14 | packaging (Docker, GoReleaser, brew, npm wrapper) | TODO | WP-13 | T-13 |
 | WP-15 | docs & security finalization | TODO | WP-13 | — |
@@ -740,6 +740,72 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
 
 *(append-only; every entry names the WPs it changed)*
 
+- 2026-08-17 — **First real-client message-passing loop worked end-to-end**
+  (Claude Code A → relay → Claude Code B → back), and the manual dogfood surfaced
+  a cluster of product/UX/security findings, all fixed in-session:
+  - **WP-06/CIMD:** `find_people` MCP tool + display **names** (`enroll -name`,
+    `store.SetPersonName` set-once) so "message bob" resolves without knowing an
+    email. Security red-team then caught a **HIGH** bug it introduced — the
+    self-asserted name reached `find_people` **unspotlighted** (a quarantine
+    bypass): fixed by `sanitizeName` at the enroll boundary (cap 64, strip
+    control chars/newlines, `Defang` URL schemes) + regression test.
+  - **WP-07 message visibility:** bodies were returned only in a text/content
+    block, but **Claude Code surfaces only `structuredContent`** and drops the
+    content block — so the receiving model saw ids but no message. Fixed by
+    putting the body in the structured output: the caller's own drafts **plain**
+    (trusted), inbound messages **spotlight-framed** (untrusted) — framing intact
+    (nonce still defeats closing-tag forgery; verified via devharness + tests).
+    `send_message` now echoes the queued draft text too. Security re-review of
+    the structured-transport: clean apart from the name bug above.
+  - **WP-07 inbound gate:** the model self-approved inbound (`approve_message`)
+    when told "handle my messages" — undercutting "approval gates both
+    directions." Hardened the verdict/send tool **descriptions** to demand the
+    human's explicit per-item approval (present-and-wait); annotations already
+    signal destructive. **Robust enforcement remains the WP-09 daemon's
+    out-of-band approval** — the MCP tools can only nudge + rely on the client
+    permission prompt.
+  - **Observability:** every `/mcp` call now logs one INFO line — tool name (a
+    shape) + person (an id) + outcome + duration (T-18) — via a go-sdk receiving
+    middleware; the generic `POST /mcp` access line was illegible alone.
+  - **Branded pages (WP-06):** the login page and now the browser-facing
+    authorize **error** pages carry the pigeon mark + relay-blue + dark-mode,
+    shared CSS factored so they can't drift; error detail stays sanitized (T-17).
+    API endpoints keep JSON errors.
+  - Tooling: added the `enroll` and `device list|revoke` CLI verbs (**WP-12
+    partial**) and a gitignored `test/` A→B→A harness (`make -C test relay|setup|
+    alice|bob`). **S-04's CIMD-fetch half is done** (real-client-validated); the
+    live-ChatGPT-connector half of the S-04 spike is still open.
+  - **Docs still owed before any push (R-12):** the docs.askrelay.dev site
+    (separate repo) must mirror all of the above — new `find_people` tool, the
+    structured-body/spotlight change, CIMD-live, `enroll -name`, tool-call
+    logging — and re-stamp. Not done here (that repo isn't checked out; pushing
+    it publishes).
+- 2026-08-15 — **First real-client smoke test** (Claude Code → live relay over
+  OAuth) validated R-06 (embedded AS) and S-04 (CIMD) against a real client for
+  the first time, and found three auth-path bugs invisible to unit tests, all
+  fixed in-session (**WP-06**): (1) the CIMD same-origin stub rejected Claude
+  Code's loopback callback — replaced by a real, SSRF-guarded metadata-document
+  fetch+validate (self-consistency + RFC 8252 §7.3 loopback-port matching), so
+  **S-04 is now fact, not caveat**; (2) `resource=…:8080/` (trailing slash) was
+  rejected — `sameResource` canonicalizes it (RFC 3986 §6.2.3); (3) the login
+  page's CSP `form-action 'self'` silently blocked the OAuth 302 to the client
+  callback (browser-only; `httptest` cannot see it) — now includes the validated
+  redirect origin. The full chain (`/authorize`→`/token`→`/mcp`) and the outbound
+  approval gate (`send_message`→`pending_review`→`approve_reply`) both ran green
+  against the real client. Security red-team (askrelay-security) surfaced three
+  items to close before the WP re-settles (**ST-6, pending**): CGNAT `100.64/10`
+  absent from the SSRF denylist while the documented deploy target is Tailscale
+  (same range); the unauthenticated + uncached CIMD fetch is usable as an
+  egress/DoS proxy (needs a concurrency cap + short cache; extend the R-10
+  rate-limit mandate to `/authorize`); `isLoopbackRedirect` host match is
+  case-sensitive (fails closed only). Docs still to update (**ST-4**): drop
+  "CIMD same-origin only pending S-04" from this §7 note, arch §4.4, and the docs
+  site. **WP-07 UX legibility gaps** to work later (not correctness bugs;
+  surfaced by single-client `get_thread`): a person's own sent messages aren't
+  marked as theirs, so they read as a "reply"; the thread `state` doesn't say who
+  it's waiting on; the structured/spotlight split (content in the spotlighted
+  text block, only `{id,from}` in structured `messages`) reads to the model as
+  "content missing".
 - 2026-07-22 — **WP-01 DONE** (first pipeline run: dev → adversarial test →
   T-16 hardening → review → security, each pass verified green by the
   orchestrator). Deps: `github.com/google/uuid v1.6.0` (BSD-3) pinned — matrix
@@ -1002,3 +1068,4 @@ market-verdict.md.
 | R-09 | A vendor ships first-party cross-person session messaging | Niche compresses (prior-art.md: Claude Tag expansion) | Phase 6 market research watches this; our moat is cross-vendor + self-hosted + OSS |
 | R-10 | DCR removed from the final MCP auth story before claude.ai migrates to CIMD | WP-06 registration path churn | Ship both DCR + CIMD (arch §4.4); S-03 re-checks the auth chapter of the 2026-07-28 final |
 | R-11 | Cold-start / retention network effect — value requires the other person also on it and responsive; a solo installer churns (askmesh's likely killer, S-05) | The core existential risk; OSS/self-host/zero-install do NOT fix it | Kosmoy whole-team dogfood adopts all-at-once (not solo trials); kill criterion 3 measures retention not trial; onboard in pairs; make first-run useful even before a reply lands (e.g. same-owner cross-machine, D-19/C3) |
+| R-12 | Three controls the pitch leans on are implemented but **unreachable on the shipped path**: `internal/redact` (WP-11 DONE) has no non-test caller, `envelope.Sign`/`Verify` have no non-test caller, and `store.RevokeDevice` has no CLI or route. Today's only working path (MCP clients) sends unsigned, unredacted text, and revoking a device needs a direct DB write | Credibility gap on a security product, not a code defect. The docs site described all three in the present tense until the 2026-08-11 audit corrected it. Widest exposure is redaction: a pasted secret reaches the wire with only the human approval gate in front of it | WP-09 wires redaction-before-signing and daemon-side verification (its test plan already asserts that order); WP-12 adds `device list\|revoke`. Until each closes, docs.askrelay.dev marks it and self-host documents the `UPDATE devices SET revoked_at` fallback. Do not describe any of the three as live — in README, CLAUDE.md, or the site — before its WP closes |

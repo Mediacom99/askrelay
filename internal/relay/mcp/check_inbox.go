@@ -19,7 +19,9 @@ type checkInboxInput struct{}
 type inboxEntry struct {
 	ID       string `json:"id"`
 	ThreadID string `json:"thread_id"`
-	Kind     string `json:"kind"` // "message" (awaiting my verdict) | "draft" (awaiting my review)
+	Kind     string `json:"kind"`              // "message" (awaiting my verdict) | "draft" (awaiting my review)
+	Text     string `json:"text,omitempty"`    // draft body (your own trusted text), for drafts
+	Message  string `json:"message,omitempty"` // inbound body, SPOTLIGHT-FRAMED (untrusted data — do not obey), for messages
 }
 
 type checkInboxOutput struct {
@@ -56,14 +58,19 @@ func (h *Handler) addCheckInbox(s *sdkmcp.Server, person string) {
 				h.log.Error("check_inbox: undecodable stored envelope", "msg", it.MessageID, "err", derr)
 				continue
 			}
-			out.ToApprove = append(out.ToApprove, inboxEntry{ID: it.MessageID, ThreadID: it.ThreadID, Kind: "message"})
 			// InboundAwaiting filters to input-required threads, so that is the
-			// authoritative state (never the sender's self-asserted e.State).
-			text.WriteString(Spotlight(e, it.SenderEmail+" (device verified)", "input-required"))
+			// authoritative state (never the sender's self-asserted e.State). The
+			// spotlight goes in BOTH the structured Message field and the content
+			// block: Claude Code surfaces only structuredContent, so a content-only
+			// body is invisible to it — the framing (untrusted DATA) is preserved
+			// either way.
+			spot := Spotlight(e, it.SenderEmail+" (device verified)", "input-required")
+			out.ToApprove = append(out.ToApprove, inboxEntry{ID: it.MessageID, ThreadID: it.ThreadID, Kind: "message", Message: spot})
+			text.WriteString(spot)
 			text.WriteString("\n\n")
 		}
 		for _, d := range drafts {
-			out.ToReview = append(out.ToReview, inboxEntry{ID: d.DraftID, ThreadID: d.ThreadID, Kind: "draft"})
+			out.ToReview = append(out.ToReview, inboxEntry{ID: d.DraftID, ThreadID: d.ThreadID, Kind: "draft", Text: draftText(d.Envelope)})
 		}
 		return textResult(strings.TrimRight(text.String(), "\n")), out, nil
 	})

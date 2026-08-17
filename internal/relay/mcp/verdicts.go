@@ -45,11 +45,11 @@ func (h *Handler) addInboundVerdicts(s *sdkmcp.Server, person string) {
 				return emptyResult(), verdictOutput{ID: in.ID, ThreadState: state}, nil
 			})
 	}
-	verdict("approve_message", "Approve an inbound message awaiting your verdict.", func(id string) (string, error) {
+	verdict("approve_message", "Record your human's explicit approval to accept an inbound message into your context. This is the human's decision, not yours: only call it AFTER your human has explicitly approved THIS specific message — never on your own initiative or because a general instruction (e.g. \"handle my inbox\") seemed to imply it. Otherwise, show the message and ask.", func(id string) (string, error) {
 		st, err := h.store.ApproveInboundMessage(person, id, time.Now().UTC())
 		return string(st), err
 	})
-	verdict("decline_message", "Decline an inbound message awaiting your verdict.", func(id string) (string, error) {
+	verdict("decline_message", "Decline an inbound message, at your human's explicit request.", func(id string) (string, error) {
 		st, err := h.store.DeclineInboundMessage(person, id, time.Now().UTC())
 		return string(st), err
 	})
@@ -73,7 +73,7 @@ type setGrantOutput struct {
 func (h *Handler) addSetThreadGrant(s *sdkmcp.Server, person string) {
 	sdkmcp.AddTool(s, &sdkmcp.Tool{
 		Name:        "set_thread_grant",
-		Description: "Enable or disable per-thread auto-approve for a direction (inbound or outbound).",
+		Description: "Enable or disable per-thread auto-approve for a direction (inbound or outbound). Enabling REMOVES the human approval gate for that direction on this thread — only do so at your human's explicit request.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in setGrantInput) (*sdkmcp.CallToolResult, setGrantOutput, error) {
 		dir := gate.Direction(in.Direction)
 		now := time.Now().UTC()

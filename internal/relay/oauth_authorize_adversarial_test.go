@@ -1,6 +1,8 @@
 package relay
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -168,8 +170,14 @@ func TestAuthorizeReflectedRedirectURIEscaped(t *testing.T) {
 func TestAuthorizeReflectedCIMDClientIDEscaped(t *testing.T) {
 	s := testServer(t)
 	evil := `https://evil.example.com/"><script>alert(1)</script>`
+	redirect := "http://localhost/callback"
+	// A valid document is required to reach the login page; the point is that the
+	// attacker-controlled client_id is still reflected there and must be escaped.
+	s.fetchCIMD = func(context.Context, string) (*clientMetadata, error) {
+		return &clientMetadata{ClientID: evil, RedirectURIs: []string{redirect}}, nil
+	}
 
-	q := authzQuery(evil, evil) // same-origin (identical string) satisfies the CIMD check
+	q := authzQuery(evil, redirect)
 	req := httptest.NewRequest("GET", "/oauth/authorize?"+q.Encode(), nil)
 	rec := httptest.NewRecorder()
 	s.handleAuthorize(rec, req)
@@ -182,35 +190,41 @@ func TestAuthorizeReflectedCIMDClientIDEscaped(t *testing.T) {
 	}
 }
 
-// TestResolveClientCIMDCrossOriginVariants: the same-origin CIMD check
-// (oauth_authorize.go resolveClient) exercised against the specific bypass
-// shapes called out in the WP-06 review -- port, subdomain, scheme downgrade,
-// userinfo trick, and host case mismatch. All must fail closed.
-func TestResolveClientCIMDCrossOriginVariants(t *testing.T) {
-	s := testServer(t)
-	const clientID = "https://chatgpt.com/.well-known/oauth-client"
+// TestResolveCIMDAdversarial: the fetch-and-validate CIMD contract exercised
+// against the failure shapes that matter now that redirect_uris come from the
+// fetched document (not a same-origin heuristic): a failed fetch, a document
+// that self-declares a different client_id (confused deputy), a redirect absent
+// from the list, and an empty list must all fail closed; a listed loopback with
+// an ephemeral request port must resolve (RFC 8252 §7.3).
+func TestResolveCIMDAdversarial(t *testing.T) {
+	const clientID = "https://claude.ai/oauth/claude-code-client-metadata"
+	doc := func(id string, uris ...string) func(context.Context, string) (*clientMetadata, error) {
+		return func(context.Context, string) (*clientMetadata, error) {
+			return &clientMetadata{ClientID: id, RedirectURIs: uris}, nil
+		}
+	}
 	cases := []struct {
-		name, redirect string
-		wantOK         bool
+		name     string
+		fetch    func(context.Context, string) (*clientMetadata, error)
+		redirect string
+		wantOK   bool
 	}{
-		{"exact same origin", "https://chatgpt.com/callback", true},
-		{"different path, same origin (by design)", "https://chatgpt.com/other/callback", true},
-		{"port added", "https://chatgpt.com:8443/callback", false},
-		{"subdomain", "https://evil.chatgpt.com/callback", false},
-		{"scheme downgrade to http", "http://chatgpt.com/callback", false},
-		{"userinfo prefix does not fool Host parsing", "https://chatgpt.com@evil.com/callback", false},
-		{"case-different host", "https://ChatGPT.com/callback", false},
-		{"suffix typosquat", "https://chatgpt.com.evil.com/callback", false},
-		{"trailing-dot host", "https://chatgpt.com./callback", false},
+		{"fetch error → reject", func(context.Context, string) (*clientMetadata, error) { return nil, errors.New("boom") }, "http://localhost:1/callback", false},
+		{"doc declares different client_id → reject", doc("https://attacker.example/meta", "http://localhost/callback"), "http://localhost:1/callback", false},
+		{"redirect not listed → reject", doc(clientID, "http://localhost/callback"), "http://localhost:1/evil", false},
+		{"empty redirect_uris → reject", doc(clientID), "http://localhost:1/callback", false},
+		{"listed loopback, ported request → accept", doc(clientID, "http://127.0.0.1/callback"), "http://127.0.0.1:5555/callback", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			_, ok, err := s.resolveClient(clientID, c.redirect)
+			s := testServer(t)
+			s.fetchCIMD = c.fetch
+			_, ok, err := s.resolveClient(context.Background(), clientID, c.redirect)
 			if err != nil {
 				t.Fatalf("resolveClient error: %v", err)
 			}
 			if ok != c.wantOK {
-				t.Errorf("resolveClient(%q, %q) ok = %v, want %v", clientID, c.redirect, ok, c.wantOK)
+				t.Errorf("ok = %v, want %v", ok, c.wantOK)
 			}
 		})
 	}
@@ -234,7 +248,7 @@ func TestAuthorizeDCRRedirectExactMatchOnly(t *testing.T) {
 	}
 	for _, redirect := range attempts {
 		t.Run(redirect, func(t *testing.T) {
-			_, ok, err := s.resolveClient(cid, redirect)
+			_, ok, err := s.resolveClient(context.Background(), cid, redirect)
 			if err != nil {
 				t.Fatalf("resolveClient error: %v", err)
 			}

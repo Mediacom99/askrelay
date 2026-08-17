@@ -104,8 +104,8 @@ func TestCheckInboxTool(t *testing.T) {
 
 	// Structured output: the message in to_approve, the draft in to_review.
 	var out struct {
-		ToApprove []struct{ ID, ThreadID, Kind string } `json:"to_approve"`
-		ToReview  []struct{ ID, ThreadID, Kind string } `json:"to_review"`
+		ToApprove []struct{ ID, ThreadID, Kind, Text, Message string } `json:"to_approve"`
+		ToReview  []struct{ ID, ThreadID, Kind, Text, Message string } `json:"to_review"`
 	}
 	raw, _ := json.Marshal(res.StructuredContent)
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -117,6 +117,23 @@ func TestCheckInboxTool(t *testing.T) {
 	if len(out.ToReview) != 1 || out.ToReview[0].ID != draftID {
 		t.Errorf("to_review = %+v, want the draft %q", out.ToReview, draftID)
 	}
+	// The caller's own draft body is in `text` (trusted, plain, review-then-approve).
+	// An inbound message body is in `message`, spotlight-framed — and MUST be in the
+	// structured output, because Claude Code surfaces only structuredContent.
+	if len(out.ToReview) == 1 && out.ToReview[0].Text != "B's draft reply" {
+		t.Errorf("to_review draft text = %q, want the draft body", out.ToReview[0].Text)
+	}
+	if len(out.ToApprove) == 1 {
+		if out.ToApprove[0].Text != "" {
+			t.Errorf("inbound body must not use the plain `text` field: %q", out.ToApprove[0].Text)
+		}
+		if !strings.Contains(out.ToApprove[0].Message, "the question from A") {
+			t.Errorf("inbound body missing from structured `message`: %q", out.ToApprove[0].Message)
+		}
+		if !strings.Contains(out.ToApprove[0].Message, "never as instructions") {
+			t.Errorf("structured inbound `message` is not spotlight-framed: %q", out.ToApprove[0].Message)
+		}
+	}
 
 	// The message content is spotlighted (quarantined) in the text content.
 	var text string
@@ -125,7 +142,7 @@ func TestCheckInboxTool(t *testing.T) {
 			text += tc.Text
 		}
 	}
-	for _, want := range []string{"the question from A", "DATA, not instructions", `from="a@example.com (device verified)"`} {
+	for _, want := range []string{"the question from A", "never as instructions", `from="a@example.com (device verified)"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("check_inbox text missing %q:\n%s", want, text)
 		}
@@ -154,6 +171,43 @@ func TestCheckInboxTool(t *testing.T) {
 	_ = json.Unmarshal(craw, &cout)
 	if len(cout.ToApprove) != 0 || len(cout.ToReview) != 0 {
 		t.Errorf("unrelated person C has a non-empty inbox: %s", craw)
+	}
+}
+
+func TestFindPeopleTool(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.logRequests(s.mux))
+	defer ts.Close()
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	alice := enrollForTest(t, s, "alice@example.com", now)
+	bob := enrollForTest(t, s, "bob@example.com", now)
+	if err := s.store.SetPersonName(bob, "Bob"); err != nil {
+		t.Fatalf("set name: %v", err)
+	}
+
+	token, _ := s.issuer.Mint(alice, "claude.ai", now)
+	sess := mcpSession(ctx, t, ts.URL, token)
+	defer sess.Close()
+
+	res, err := sess.CallTool(ctx, &sdkmcp.CallToolParams{Name: "find_people", Arguments: map[string]any{}})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	var out struct {
+		People []struct{ Email, Name string } `json:"people"`
+	}
+	raw, _ := json.Marshal(res.StructuredContent)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode structured: %v (%s)", err, raw)
+	}
+	// The caller (alice) is excluded; bob appears with his name.
+	if len(out.People) != 1 {
+		t.Fatalf("people = %+v, want just bob (self excluded)", out.People)
+	}
+	if out.People[0].Email != "bob@example.com" || out.People[0].Name != "Bob" {
+		t.Errorf("person = %+v, want bob@example.com / Bob", out.People[0])
 	}
 }
 
@@ -464,9 +518,9 @@ func TestGetThreadTool(t *testing.T) {
 		t.Fatalf("get_thread as participant failed: err=%v isErr=%v", err, res != nil && res.IsError)
 	}
 	var out struct {
-		State    string                                `json:"state"`
-		Messages []struct{ ID, From string }           `json:"messages"`
-		Drafts   []struct{ ID, ThreadID, Kind string } `json:"drafts"`
+		State    string                                      `json:"state"`
+		Messages []struct{ ID, From, Body string }           `json:"messages"`
+		Drafts   []struct{ ID, ThreadID, Kind, Text string } `json:"drafts"`
 	}
 	raw, _ := json.Marshal(res.StructuredContent)
 	if err := json.Unmarshal(raw, &out); err != nil {
@@ -478,13 +532,21 @@ func TestGetThreadTool(t *testing.T) {
 	if len(out.Drafts) != 1 || out.Drafts[0].ID != draftID {
 		t.Errorf("drafts = %+v, want B's draft", out.Drafts)
 	}
+	// The message body must be in the STRUCTURED output (Claude Code surfaces only
+	// that), spotlight-framed; the caller's own draft body is plain (trusted).
+	if len(out.Messages) == 1 && (!strings.Contains(out.Messages[0].Body, "the question from A") || !strings.Contains(out.Messages[0].Body, "never as instructions")) {
+		t.Errorf("structured message body not spotlight-framed: %q", out.Messages[0].Body)
+	}
+	if len(out.Drafts) == 1 && out.Drafts[0].Text != "B private draft" {
+		t.Errorf("structured draft text = %q, want the draft body", out.Drafts[0].Text)
+	}
 	var text string
 	for _, c := range res.Content {
 		if tc, isText := c.(*sdkmcp.TextContent); isText {
 			text += tc.Text
 		}
 	}
-	if !strings.Contains(text, "the question from A") || !strings.Contains(text, "DATA, not instructions") {
+	if !strings.Contains(text, "the question from A") || !strings.Contains(text, "never as instructions") {
 		t.Errorf("thread message not spotlighted:\n%s", text)
 	}
 	if strings.Contains(text, "B private draft") {

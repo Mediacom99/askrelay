@@ -255,3 +255,87 @@ func (s *Store) ActiveDeviceByID(deviceID string) (Device, error) {
 	d.CreatedAt = time.Unix(created, 0).UTC()
 	return d, nil
 }
+
+// SetPersonName sets a person's display name, but only if one is not already set
+// (label == ”), so a re-enroll can't silently overwrite it. The name is
+// self-asserted at enrollment — a display label like an email's display name,
+// not an identity claim. An empty name is a no-op.
+func (s *Store) SetPersonName(personID, name string) error {
+	if name == "" {
+		return nil
+	}
+	return s.writeTx(func(tx *sql.Tx) error {
+		if _, err := tx.Exec(`UPDATE persons SET label = ? WHERE id = ? AND label = ''`, name, personID); err != nil {
+			return fmt.Errorf("store: set person name: %w", err)
+		}
+		return nil
+	})
+}
+
+// ListPeople returns the roster — everyone except excludeID — as the find_people
+// tool's source (email + name so a sender can resolve a name to an address),
+// ordered by email. This enumerates the roster, a broader oracle than
+// send_message's probe-one lookup; acceptable for a same-team self-hosted relay.
+func (s *Store) ListPeople(excludeID string) ([]Person, error) {
+	rows, err := s.db.Query(
+		`SELECT id, email, label, created_at FROM persons WHERE id != ? ORDER BY email`, excludeID)
+	if err != nil {
+		return nil, fmt.Errorf("store: list people: %w", err)
+	}
+	defer rows.Close()
+	var out []Person
+	for rows.Next() {
+		var p Person
+		var created int64
+		if err := rows.Scan(&p.ID, &p.Email, &p.Label, &created); err != nil {
+			return nil, fmt.Errorf("store: scan person: %w", err)
+		}
+		p.CreatedAt = time.Unix(created, 0).UTC()
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate people: %w", err)
+	}
+	return out, nil
+}
+
+// DeviceListing is one row of `device list`: a device joined with its owner's
+// email, plus revocation status. RevokedAt.IsZero() == active.
+type DeviceListing struct {
+	DeviceID  string
+	Email     string
+	Label     string
+	CreatedAt time.Time
+	RevokedAt time.Time
+}
+
+// ListDevices returns all enrolled devices (active and revoked), newest first,
+// joined with the owning person's email — the read behind `device list`.
+func (s *Store) ListDevices() ([]DeviceListing, error) {
+	rows, err := s.db.Query(
+		`SELECT d.id, p.email, d.label, d.created_at, d.revoked_at
+		 FROM devices d JOIN persons p ON p.id = d.person_id
+		 ORDER BY d.created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list devices: %w", err)
+	}
+	defer rows.Close()
+	var out []DeviceListing
+	for rows.Next() {
+		var dl DeviceListing
+		var created int64
+		var revoked sql.NullInt64
+		if err := rows.Scan(&dl.DeviceID, &dl.Email, &dl.Label, &created, &revoked); err != nil {
+			return nil, fmt.Errorf("store: list devices: %w", err)
+		}
+		dl.CreatedAt = time.Unix(created, 0).UTC()
+		if revoked.Valid {
+			dl.RevokedAt = time.Unix(revoked.Int64, 0).UTC()
+		}
+		out = append(out, dl)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: list devices: %w", err)
+	}
+	return out, nil
+}

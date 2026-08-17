@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
@@ -50,7 +51,7 @@ type authzReject struct {
 
 // handleAuthorize (GET) validates the request and renders the login page.
 func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
-	p, rej := s.parseAuthz(r.URL.Query())
+	p, rej := s.parseAuthz(r.Context(), r.URL.Query())
 	if rej != nil {
 		s.rejectAuthz(w, r, rej, r.URL.Query().Get("state"))
 		return
@@ -63,10 +64,10 @@ func (s *Server) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxAuthzBody)
 	if err := r.ParseForm(); err != nil {
-		s.httpError(w, http.StatusBadRequest, "invalid form")
+		s.renderError(w, http.StatusBadRequest, "invalid form")
 		return
 	}
-	p, rej := s.parseAuthz(r.PostForm)
+	p, rej := s.parseAuthz(r.Context(), r.PostForm)
 	if rej != nil {
 		s.rejectAuthz(w, r, rej, r.PostForm.Get("state"))
 		return
@@ -89,7 +90,7 @@ func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	code, err := newOpaqueToken()
 	if err != nil {
 		s.log.Error("authorize: mint code", "err", err)
-		s.httpError(w, http.StatusInternalServerError, "authorization failed")
+		s.renderError(w, http.StatusInternalServerError, "authorization failed")
 		return
 	}
 	err = s.store.CreateAuthCode(code, store.AuthCode{
@@ -103,7 +104,7 @@ func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	}, now.Add(codeTTL), now)
 	if err != nil {
 		s.log.Error("authorize: store code", "err", err)
-		s.httpError(w, http.StatusInternalServerError, "authorization failed")
+		s.renderError(w, http.StatusInternalServerError, "authorization failed")
 		return
 	}
 
@@ -121,7 +122,7 @@ func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 // parseAuthz validates an /authorize request from v (query or POST form).
 // client_id + redirect_uri are validated FIRST; only after redirect_uri is
 // trusted are the remaining failures made redirectable.
-func (s *Server) parseAuthz(v url.Values) (authzParams, *authzReject) {
+func (s *Server) parseAuthz(ctx context.Context, v url.Values) (authzParams, *authzReject) {
 	p := authzParams{
 		ResponseType:        v.Get("response_type"),
 		ClientID:            v.Get("client_id"),
@@ -135,7 +136,7 @@ func (s *Server) parseAuthz(v url.Values) (authzParams, *authzReject) {
 	if p.ClientID == "" || p.RedirectURI == "" {
 		return authzParams{}, &authzReject{status: http.StatusBadRequest, msg: "missing client_id or redirect_uri"}
 	}
-	clientType, ok, err := s.resolveClient(p.ClientID, p.RedirectURI)
+	clientType, ok, err := s.resolveClient(ctx, p.ClientID, p.RedirectURI)
 	if err != nil {
 		s.log.Error("authorize: resolve client", "err", err)
 		return authzParams{}, &authzReject{status: http.StatusInternalServerError, msg: "authorization failed"}
@@ -154,28 +155,31 @@ func (s *Server) parseAuthz(v url.Values) (authzParams, *authzReject) {
 	if p.CodeChallenge == "" || p.CodeChallengeMethod != "S256" {
 		return authzParams{}, &authzReject{redirectURI: p.RedirectURI, oauthErr: "invalid_request", desc: "PKCE with code_challenge_method=S256 is required"}
 	}
-	if p.Resource != "" && p.Resource != s.cfg.BaseURL {
+	if p.Resource != "" && !sameResource(p.Resource, s.cfg.BaseURL) {
 		return authzParams{}, &authzReject{redirectURI: p.RedirectURI, oauthErr: "invalid_target", desc: "resource does not match this relay"}
 	}
 	return p, nil
 }
 
+// sameResource reports whether an RFC 8707 resource indicator refers to this
+// relay, treating a root trailing slash as equivalent (RFC 3986 §6.2.3): clients
+// send the origin as http://host:port/, but our BaseURL is slash-less.
+func sameResource(resource, baseURL string) bool {
+	return strings.TrimRight(resource, "/") == strings.TrimRight(baseURL, "/")
+}
+
 // resolveClient validates the client_id ↔ redirect_uri pairing and returns the
-// derived client_type. A CIMD client_id (an https URL) requires a same-origin
-// redirect (no remote fetch — SSRF-safe v1; the metadata-document fetch is a
-// later, S-04-gated upgrade). A DCR client_id must exist and list redirect_uri
-// exactly. ok=false is any invalid pairing; err is only an infrastructure fault.
-func (s *Server) resolveClient(clientID, redirectURI string) (clientType string, ok bool, err error) {
+// derived client_type. A CIMD client_id (an https URL) is validated against its
+// fetched metadata document (resolveCIMD). A DCR client_id must exist and list
+// redirect_uri exactly. ok=false is any invalid pairing; err is only an
+// infrastructure fault.
+func (s *Server) resolveClient(ctx context.Context, clientID, redirectURI string) (clientType string, ok bool, err error) {
 	ru, perr := url.Parse(redirectURI)
 	if perr != nil || !ru.IsAbs() {
 		return "", false, nil
 	}
 	if cu, cerr := url.Parse(clientID); cerr == nil && cu.Scheme == "https" && cu.Host != "" {
-		// CIMD: same scheme+host binds the redirect to the client's own origin.
-		if ru.Scheme == cu.Scheme && ru.Host == cu.Host {
-			return clientTypeFor(ru.Host), true, nil
-		}
-		return "", false, nil
+		return s.resolveCIMD(ctx, clientID, cu, redirectURI)
 	}
 	c, cerr := s.store.ClientByID(clientID)
 	if errors.Is(cerr, store.ErrClientUnknown) {
@@ -187,6 +191,31 @@ func (s *Server) resolveClient(clientID, redirectURI string) (clientType string,
 	if slices.Contains(c.RedirectURIs, redirectURI) {
 		return clientTypeFor(ru.Host), true, nil
 	}
+	return "", false, nil
+}
+
+// resolveCIMD validates a Client ID Metadata Document client_id: fetch the doc,
+// require it to self-declare the same client_id (confused-deputy guard), and
+// accept redirectURI only if listed there (exact, or loopback-port-agnostic per
+// RFC 8252 §7.3). Any fetch/validation failure fails closed (ok=false) with a
+// reason-coded Warn — never a 500, never the URL/body (T-17/T-18). The §5.4
+// profile comes from the client_id origin, not the (often loopback) redirect host.
+func (s *Server) resolveCIMD(ctx context.Context, clientID string, cu *url.URL, redirectURI string) (string, bool, error) {
+	meta, err := s.fetchCIMD(ctx, clientID)
+	if err != nil {
+		s.log.Warn("authorize refused", "reason", "cimd_fetch")
+		return "", false, nil
+	}
+	if meta.ClientID != clientID {
+		s.log.Warn("authorize refused", "reason", "cimd_client_id_mismatch")
+		return "", false, nil
+	}
+	for _, reg := range meta.RedirectURIs {
+		if redirectMatches(reg, redirectURI) {
+			return clientTypeFor(cu.Host), true, nil
+		}
+	}
+	s.log.Warn("authorize refused", "reason", "cimd_redirect_unlisted")
 	return "", false, nil
 }
 
@@ -209,12 +238,12 @@ func clientTypeFor(host string) string {
 // redirect target is trusted) back to the client with an OAuth error.
 func (s *Server) rejectAuthz(w http.ResponseWriter, r *http.Request, rej *authzReject, state string) {
 	if rej.redirectURI == "" {
-		s.httpError(w, rej.status, rej.msg)
+		s.renderError(w, rej.status, rej.msg)
 		return
 	}
 	u, err := url.Parse(rej.redirectURI)
 	if err != nil {
-		s.httpError(w, http.StatusBadRequest, "invalid redirect_uri")
+		s.renderError(w, http.StatusBadRequest, "invalid redirect_uri")
 		return
 	}
 	q := u.Query()
@@ -233,10 +262,19 @@ func (s *Server) rejectAuthz(w http.ResponseWriter, r *http.Request, rej *authzR
 // params as hidden fields so the POST carries them. errMsg is shown on a retry.
 func (s *Server) renderLogin(w http.ResponseWriter, p authzParams, errMsg string) {
 	host := p.RedirectURI
-	if u, err := url.Parse(p.RedirectURI); err == nil {
+	// form-action must permit BOTH the POST back to us ('self') AND the OAuth 302
+	// to the client's validated callback — browsers enforce form-action across the
+	// redirect, so 'self' alone silently blocks the hand-off to the client (the
+	// login page appears to "do nothing" on submit). p.RedirectURI is already
+	// validated (resolveClient) before we render, so its origin is trusted.
+	formAction := "'self'"
+	if u, err := url.Parse(p.RedirectURI); err == nil && u.Host != "" {
 		host = u.Host
+		if u.Scheme != "" {
+			formAction += " " + u.Scheme + "://" + u.Host
+		}
 	}
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action "+formAction+"; base-uri 'none'")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -250,23 +288,62 @@ type loginData struct {
 	AuthorizePath string
 }
 
+// renderError serves the branded HTML error page for BROWSER-facing authorize
+// failures — the hard rejects that render inline instead of redirecting. API
+// endpoints (enroll/token/mcp) keep using httpError (JSON); this is only for the
+// human-facing /authorize paths. detail must be sanitized/content-free (T-17).
+func (s *Server) renderError(w http.ResponseWriter, status int, detail string) {
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_ = errorTmpl.Execute(w, errorData{Heading: "Couldn't authorize", Detail: detail})
+}
+
+// brandCSS is the shared style for the server-rendered pages (login + error),
+// factored into one const so the two can't drift apart.
+const brandCSS = `
+:root{--accent:#3b82f6;--accent-press:#2563eb;--bg:#f6f7f9;--card:#fff;--text:#0a121d;--muted:#5b6472;--border:#e3e7ec;--err:#b00020}
+@media (prefers-color-scheme:dark){:root{--bg:#0a121d;--card:#111c2b;--text:#e7ecf3;--muted:#8b97a8;--border:#1e2c3d;--err:#ff8a8a}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1.5rem;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+.card{width:100%;max-width:26rem;background:var(--card);border:1px solid var(--border);border-radius:14px;padding:2rem;box-shadow:0 1px 3px rgba(0,0,0,.06),0 8px 24px rgba(0,0,0,.06)}
+.brand{display:flex;align-items:center;gap:.55rem;margin-bottom:1.25rem}
+.mark{width:34px;height:34px;display:block}
+.brand b{font-size:1.15rem;letter-spacing:-.01em}
+h1{font-size:1.2rem;margin:0 0 .4rem}
+p{margin:0 0 1rem;color:var(--muted)}
+p strong{color:var(--text)}`
+
+// brandMark is the pigeon mark + wordmark header shared by both pages (served
+// same-origin from /brand, so the CSP stays img-src 'self').
+const brandMark = `<div class="brand"><picture><source media="(prefers-color-scheme:dark)" srcset="/brand/mark-dark.png"><img class="mark" src="/brand/mark.png" width="34" height="34" alt=""></picture><b>askrelay</b></div>`
+
 // loginTmpl is server-rendered; html/template contextually escapes every
 // attacker-controlled param reflected into the page.
 var loginTmpl = template.Must(template.New("login").Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <title>askrelay — authorize</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<style>body{font-family:system-ui,sans-serif;max-width:30rem;margin:4rem auto;padding:0 1rem;line-height:1.5}
-textarea{width:100%;box-sizing:border-box;font-family:monospace;font-size:.85rem}
-button{margin-top:1rem;padding:.6rem 1.2rem;font-size:1rem}
-.err{color:#b00020;font-weight:600}</style>
+<style>` + brandCSS + `
+label{display:block;font-size:.85rem;font-weight:600;margin-bottom:.4rem}
+textarea{width:100%;min-height:5.5rem;padding:.7rem;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8rem;resize:vertical}
+textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+button{margin-top:1rem;width:100%;padding:.7rem;border:0;border-radius:8px;background:var(--accent);color:#fff;font-size:1rem;font-weight:600;cursor:pointer}
+button:hover{background:var(--accent-press)}
+.err{color:var(--err);font-weight:600;font-size:.9rem;margin:0 0 .8rem}
+.hint{font-size:.78rem;color:var(--muted);margin:.9rem 0 0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+</style>
 </head><body>
+<main class="card">` + brandMark + `
 <h1>Authorize access</h1>
-<p>The app at <strong>{{.AppHost}}</strong> wants to act as you in askrelay.</p>
-<p>Paste your <strong>device credential</strong> to continue.</p>
+<p><strong>{{.AppHost}}</strong> wants to act as you in askrelay.</p>
 {{if .ErrMsg}}<p class="err">{{.ErrMsg}}</p>{{end}}
 <form method="post" action="{{.AuthorizePath}}">
-<textarea name="credential" rows="4" required autofocus placeholder="device credential"></textarea>
+<label for="cred">Device credential</label>
+<textarea id="cred" name="credential" rows="4" required autofocus placeholder="Paste the credential printed by askrelay enroll"></textarea>
 <input type="hidden" name="response_type" value="{{.P.ResponseType}}">
 <input type="hidden" name="client_id" value="{{.P.ClientID}}">
 <input type="hidden" name="redirect_uri" value="{{.P.RedirectURI}}">
@@ -277,7 +354,26 @@ button{margin-top:1rem;padding:.6rem 1.2rem;font-size:1rem}
 <input type="hidden" name="scope" value="{{.P.Scope}}">
 <button type="submit">Authorize</button>
 </form>
+<p class="hint">askrelay never sees your AI provider's credentials. Only paste a credential you generated with <code>askrelay enroll</code>.</p>
+</main>
 </body></html>`))
+
+// errorTmpl is the branded page for browser-facing authorize failures (the hard
+// rejects that render inline instead of redirecting). Detail is a sanitized,
+// content-free string (T-17).
+var errorTmpl = template.Must(template.New("error").Parse(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>askrelay</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>` + brandCSS + `</style>
+</head><body>
+<main class="card">` + brandMark + `
+<h1>{{.Heading}}</h1>
+<p>{{.Detail}}</p>
+</main>
+</body></html>`))
+
+type errorData struct{ Heading, Detail string }
 
 // newOpaqueToken returns a 256-bit URL-safe random token (auth codes, refresh
 // tokens). Stored only as its SHA-256 (the store hashes on write).

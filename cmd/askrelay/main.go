@@ -3,14 +3,24 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/Mediacom99/askrelay/internal/relay"
@@ -31,6 +41,10 @@ func main() {
 		err = cmdServe(args)
 	case "invite":
 		err = cmdInvite(args)
+	case "enroll":
+		err = cmdEnroll(args)
+	case "device":
+		err = cmdDevice(args)
 	case "version":
 		fmt.Println(relay.Version)
 	case "help", "-h", "--help":
@@ -54,6 +68,8 @@ usage: askrelay <command> [flags]
 commands:
   serve             run the relay HTTP server
   invite <email>    mint a single-use enrollment invite, print the invite URL
+  enroll <url>      enroll this machine as a device from an invite URL
+  device list|revoke  list or revoke enrolled devices (relay host)
   version           print version
   help              show this help
 `)
@@ -125,6 +141,219 @@ func cmdInvite(args []string) error {
 		return err
 	}
 	fmt.Printf("%s/enroll/%s\n", strings.TrimRight(*baseURL, "/"), token)
+	return nil
+}
+
+type enrollReq struct {
+	PubKey string `json:"pubkey"`
+	Label  string `json:"label"`
+	Name   string `json:"name,omitempty"`
+}
+
+type enrollResp struct {
+	PersonID         string `json:"person_id"`
+	DeviceID         string `json:"device_id"`
+	BaseURL          string `json:"base_url"`
+	DeviceCredential string `json:"device_credential"`
+}
+
+// deviceConfig is the arch §7 user config: relay URL, person, device-key path.
+// The credential is printed (for the browser paste), not stored — no consumer
+// persists it until the WP-09 daemon does.
+type deviceConfig struct {
+	RelayURL string `json:"relay_url"`
+	PersonID string `json:"person_id"`
+	DeviceID string `json:"device_id"`
+	KeyPath  string `json:"device_key_path"`
+}
+
+// cmdEnroll consumes an invite URL, enrolls this machine as a device, writes the
+// user config + private key (0600) under ~/.config/askrelay, and prints the
+// device credential to paste when connecting an AI client. Colleague-side: it
+// talks to the relay over HTTP (unlike invite/device, which open the DB).
+func cmdEnroll(args []string) error {
+	var inviteURL string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		inviteURL, args = args[0], args[1:]
+	}
+	fs := flag.NewFlagSet("enroll", flag.ContinueOnError)
+	label := fs.String("label", defaultLabel(), "device label (shown in `device list`)")
+	name := fs.String("name", "", "your display name (shown to people who message you)")
+	cfgPath := fs.String("config", "", "config file path (default ~/.config/askrelay/config.json)")
+	force := fs.Bool("force", false, "replace an existing enrollment")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if inviteURL == "" {
+		if fs.NArg() != 1 {
+			return fmt.Errorf("usage: askrelay enroll <invite-url> [-label name] [-config path] [-force]")
+		}
+		inviteURL = fs.Arg(0)
+	}
+
+	path, keyPath, err := configPaths(*cfgPath)
+	if err != nil {
+		return err
+	}
+	if !*force {
+		if _, err := os.Stat(path); err == nil {
+			return fmt.Errorf("already enrolled (%s exists); pass -force to replace", path)
+		}
+	}
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		return fmt.Errorf("askrelay: generate device key: %w", err)
+	}
+	resp, err := postEnroll(inviteURL, pub, *label, *name)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("askrelay: create config dir: %w", err)
+	}
+	if err := os.WriteFile(keyPath, priv, 0o600); err != nil {
+		return fmt.Errorf("askrelay: write device key: %w", err)
+	}
+	buf, _ := json.MarshalIndent(deviceConfig{
+		RelayURL: resp.BaseURL, PersonID: resp.PersonID, DeviceID: resp.DeviceID, KeyPath: keyPath,
+	}, "", "  ")
+	if err := os.WriteFile(path, buf, 0o600); err != nil {
+		return fmt.Errorf("askrelay: write config: %w", err)
+	}
+
+	fmt.Printf("Enrolled as %s (device %s) on %s\n", resp.PersonID, resp.DeviceID, resp.BaseURL)
+	fmt.Printf("Config: %s\nKey:    %s\n\n", path, keyPath)
+	fmt.Printf("Device credential — paste this into the authorize page when you connect your AI client:\n\n%s\n", resp.DeviceCredential)
+	return nil
+}
+
+// postEnroll POSTs the pubkey to the invite URL and returns the enroll response.
+func postEnroll(inviteURL string, pub ed25519.PublicKey, label, name string) (enrollResp, error) {
+	body, _ := json.Marshal(enrollReq{PubKey: base64.StdEncoding.EncodeToString(pub), Label: label, Name: name})
+	req, err := http.NewRequest(http.MethodPost, inviteURL, bytes.NewReader(body))
+	if err != nil {
+		return enrollResp{}, fmt.Errorf("askrelay: build enroll request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return enrollResp{}, fmt.Errorf("askrelay: enroll request: %w", err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 8<<10))
+	if res.StatusCode != http.StatusOK {
+		return enrollResp{}, fmt.Errorf("askrelay: enroll failed (HTTP %d): %s", res.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	var er enrollResp
+	if err := json.Unmarshal(raw, &er); err != nil {
+		return enrollResp{}, fmt.Errorf("askrelay: decode enroll response: %w", err)
+	}
+	return er, nil
+}
+
+// configPaths resolves config.json + device.key (arch §7: ~/.config/askrelay,
+// honoring XDG_CONFIG_HOME).
+func configPaths(override string) (cfgPath, keyPath string, err error) {
+	if override != "" {
+		return override, filepath.Join(filepath.Dir(override), "device.key"), nil
+	}
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		home, herr := os.UserHomeDir()
+		if herr != nil {
+			return "", "", fmt.Errorf("askrelay: locate home dir: %w", herr)
+		}
+		dir = filepath.Join(home, ".config")
+	}
+	dir = filepath.Join(dir, "askrelay")
+	return filepath.Join(dir, "config.json"), filepath.Join(dir, "device.key"), nil
+}
+
+func defaultLabel() string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "device"
+}
+
+// cmdDevice manages enrolled devices on the relay host (opens the DB directly,
+// like invite — WAL + busy_timeout handle contention with a running serve).
+func cmdDevice(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: askrelay device <list|revoke> [args]")
+	}
+	switch args[0] {
+	case "list":
+		return cmdDeviceList(args[1:])
+	case "revoke":
+		return cmdDeviceRevoke(args[1:])
+	default:
+		return fmt.Errorf("askrelay device: unknown subcommand %q (want list|revoke)", args[0])
+	}
+}
+
+func cmdDeviceList(args []string) error {
+	fs := flag.NewFlagSet("device list", flag.ContinueOnError)
+	dbPath := fs.String("db", envOr("ASKRELAY_DB", "askrelay.db"), "sqlite database path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	devices, err := st.ListDevices()
+	if err != nil {
+		return err
+	}
+	if len(devices) == 0 {
+		fmt.Println("no devices enrolled")
+		return nil
+	}
+	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "DEVICE ID\tPERSON\tLABEL\tENROLLED\tSTATUS")
+	for _, d := range devices {
+		status := "active"
+		if !d.RevokedAt.IsZero() {
+			status = "revoked " + d.RevokedAt.Format("2006-01-02")
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n",
+			d.DeviceID, d.Email, d.Label, d.CreatedAt.Format("2006-01-02"), status)
+	}
+	return tw.Flush()
+}
+
+func cmdDeviceRevoke(args []string) error {
+	var deviceID string
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		deviceID, args = args[0], args[1:]
+	}
+	fs := flag.NewFlagSet("device revoke", flag.ContinueOnError)
+	dbPath := fs.String("db", envOr("ASKRELAY_DB", "askrelay.db"), "sqlite database path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if deviceID == "" {
+		if fs.NArg() != 1 {
+			return fmt.Errorf("usage: askrelay device revoke <device-id> [-db path]")
+		}
+		deviceID = fs.Arg(0)
+	}
+	st, err := store.Open(*dbPath)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	if err := st.RevokeDevice(deviceID, time.Now().UTC()); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("no such device: %s", deviceID)
+		}
+		return err
+	}
+	fmt.Printf("revoked device %s\n", deviceID)
 	return nil
 }
 

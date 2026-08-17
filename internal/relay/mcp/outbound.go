@@ -30,6 +30,7 @@ type sendMessageOutput struct {
 	DraftID  string `json:"draft_id"`
 	ThreadID string `json:"thread_id"`
 	State    string `json:"state"` // "pending_review" | "sent" (auto-released by a grant)
+	Text     string `json:"text"`  // echo of the queued body, so the human reviews exactly what will send before approving
 }
 
 // addSendMessage registers send_message, bound to person. It creates an
@@ -39,7 +40,7 @@ type sendMessageOutput struct {
 func (h *Handler) addSendMessage(s *sdkmcp.Server, person string) {
 	sdkmcp.AddTool(s, &sdkmcp.Tool{
 		Name:        "send_message",
-		Description: "Ask or reply. The outbound gate holds it for your review unless a grant covers the thread.",
+		Description: "Draft an ask or a reply. It is HELD for your human's review and is NOT sent until they approve it (approve_reply) — do not approve your own draft. If a thread grant already covers this direction, the relay auto-releases it.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in sendMessageInput) (*sdkmcp.CallToolResult, sendMessageOutput, error) {
 		now := time.Now().UTC()
 		if len(in.Text) > envelope.MaxBodyBytes {
@@ -95,7 +96,7 @@ func (h *Handler) addSendMessage(s *sdkmcp.Server, person string) {
 			state = "sent"
 			h.notify(recipientID)
 		}
-		return emptyResult(), sendMessageOutput{DraftID: draftID, ThreadID: threadID, State: state}, nil
+		return emptyResult(), sendMessageOutput{DraftID: draftID, ThreadID: threadID, State: state, Text: in.Text}, nil
 	})
 }
 
@@ -118,7 +119,7 @@ type replyOutput struct {
 func (h *Handler) addOutboundVerdicts(s *sdkmcp.Server, person string) {
 	sdkmcp.AddTool(s, &sdkmcp.Tool{
 		Name:        "approve_reply",
-		Description: "Release one of your drafts (optionally editing it first).",
+		Description: "Release (SEND) one of your drafts to its recipient — irreversible. Only call AFTER your human has explicitly approved this specific draft; otherwise show them the draft and wait. Optionally edit the text first.",
 	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in approveReplyInput) (*sdkmcp.CallToolResult, replyOutput, error) {
 		if in.EditedText != nil && len(*in.EditedText) > envelope.MaxBodyBytes {
 			return nil, replyOutput{}, errTooLong

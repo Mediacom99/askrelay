@@ -7,10 +7,37 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"time"
+	"unicode"
 
+	"github.com/Mediacom99/askrelay/internal/relay/mcp"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
+
+// maxNameLen caps a display name — it is a short label, not content.
+const maxNameLen = 64
+
+// sanitizeName reduces a self-asserted display name to a safe short label. The
+// name is enrollee-supplied (untrusted) and is shown to OTHER people's agents via
+// find_people WITHOUT the spotlight, so — unlike message bodies — it must not
+// carry control chars (ANSI/terminal injection), newlines (forged framing), or
+// live URL schemes, and is length-capped (security review finding: the name
+// bypassed the inbound-untrusted quarantine).
+func sanitizeName(name string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range name {
+		if unicode.IsControl(r) { // drop \n, \t, ANSI ESC, C0/C1, DEL
+			continue
+		}
+		b.WriteRune(r)
+		if n++; n >= maxNameLen {
+			break
+		}
+	}
+	return strings.TrimSpace(mcp.Defang(b.String()))
+}
 
 // maxEnrollBody bounds the enrollment request — a pubkey plus a short label,
 // nothing large. Pre-bounding the read is the WP-01/WP-03 ingress discipline
@@ -18,8 +45,9 @@ import (
 const maxEnrollBody = 4 << 10
 
 type enrollRequest struct {
-	PubKey string `json:"pubkey"` // base64 (std) of the 32-byte Ed25519 public key
-	Label  string `json:"label"`
+	PubKey string `json:"pubkey"`         // base64 (std) of the 32-byte Ed25519 public key
+	Label  string `json:"label"`          // device label (hostname), shown in `device list`
+	Name   string `json:"name,omitempty"` // enrollee's display name, shown to people who message them
 }
 
 type enrollResponse struct {
@@ -63,6 +91,12 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("enroll failed", "err", err) // full error stays server-side only
 		s.httpError(w, http.StatusInternalServerError, "enrollment failed")
 		return
+	}
+
+	// Set the display name (self-asserted, only if not already set). Non-fatal:
+	// the device is enrolled regardless; a missing name is cosmetic.
+	if err := s.store.SetPersonName(person.ID, sanitizeName(req.Name)); err != nil {
+		s.log.Error("enroll: set name", "err", err)
 	}
 
 	cred, err := s.issuer.MintDeviceCredential(person.ID, device.ID, time.Now().UTC())

@@ -52,7 +52,9 @@ func testServer(t *testing.T) *Server {
 		MaxAge: 24 * time.Hour, MaxSkew: 5 * time.Minute,
 		AckGrace: 72 * time.Hour, HardTTL: 720 * time.Hour,
 	}
-	return NewServer(cfg, st, iss, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv := NewServer(cfg, st, iss, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	srv.fetchCIMD = disabledCIMD
+	return srv
 }
 
 // serve routes a request through the full handler chain (mux + logging) so

@@ -1,6 +1,7 @@
 package relay
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"net/http"
@@ -81,6 +82,11 @@ func TestAuthorizeGETRendersForm(t *testing.T) {
 	}
 	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") {
 		t.Errorf("CSP = %q, want a restrictive policy", csp)
+	}
+	// form-action must allow the redirect to the client callback origin, or the
+	// browser blocks the OAuth 302 (a real-browser bug httptest cannot catch).
+	if csp := rec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "form-action 'self' https://client.example.com") {
+		t.Errorf("CSP = %q, want form-action to include the redirect origin", csp)
 	}
 }
 
@@ -252,19 +258,32 @@ func TestAuthorizeReflectedParamEscaped(t *testing.T) {
 	}
 }
 
-func TestResolveClientCIMDSameOrigin(t *testing.T) {
+// TestResolveCIMD: a CIMD client_id resolves when the fetched metadata document
+// self-declares the same client_id and lists a matching redirect — exact for
+// https, or loopback-port-agnostic (RFC 8252 §7.3) for the native-app loopback.
+func TestResolveCIMD(t *testing.T) {
 	s := testServer(t)
-	// CIMD: https-URL client_id, same-origin redirect → resolves.
-	ct, ok, err := s.resolveClient("https://chatgpt.com/.well-known/oauth-client", "https://chatgpt.com/callback")
+	const clientID = "https://claude.ai/oauth/claude-code-client-metadata"
+	s.fetchCIMD = func(context.Context, string) (*clientMetadata, error) {
+		return &clientMetadata{ClientID: clientID,
+			RedirectURIs: []string{"http://localhost/callback", "https://claude.ai/callback"}}, nil
+	}
+	ctx := context.Background()
+	// Loopback redirect with an ephemeral port matches the port-less registered one.
+	ct, ok, err := s.resolveClient(ctx, clientID, "http://localhost:52341/callback")
 	if err != nil || !ok {
-		t.Fatalf("same-origin CIMD: ok=%v err=%v, want ok", ok, err)
+		t.Fatalf("loopback CIMD: ok=%v err=%v, want ok", ok, err)
 	}
-	if ct != "chatgpt" {
-		t.Errorf("client_type = %q, want chatgpt", ct)
+	if ct != "claude.ai" { // profile from client_id origin, not the loopback redirect host
+		t.Errorf("client_type = %q, want claude.ai", ct)
 	}
-	// Cross-origin redirect → rejected.
-	if _, ok, _ := s.resolveClient("https://chatgpt.com/.well-known/oauth-client", "https://evil.example.com/cb"); ok {
-		t.Error("cross-origin CIMD redirect must be rejected")
+	// Exact listed https redirect also resolves.
+	if _, ok, _ := s.resolveClient(ctx, clientID, "https://claude.ai/callback"); !ok {
+		t.Error("exact listed https redirect must resolve")
+	}
+	// A redirect not in the document is rejected.
+	if _, ok, _ := s.resolveClient(ctx, clientID, "http://localhost:52341/evil"); ok {
+		t.Error("unlisted redirect must be rejected")
 	}
 }
 

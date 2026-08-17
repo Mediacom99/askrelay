@@ -41,7 +41,9 @@ func testServerWithLog(t *testing.T) (*Server, *bytes.Buffer) {
 		AckGrace: 72 * time.Hour, HardTTL: 720 * time.Hour,
 	}
 	var buf bytes.Buffer
-	return NewServer(cfg, st, iss, slog.New(slog.NewTextHandler(&buf, nil))), &buf
+	srv := NewServer(cfg, st, iss, slog.New(slog.NewTextHandler(&buf, nil)))
+	srv.fetchCIMD = disabledCIMD
+	return srv, &buf
 }
 
 // TestAuthorizeNeverLogsCredentialOrCode: a pasted device credential, and the
