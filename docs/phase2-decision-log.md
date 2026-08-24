@@ -576,3 +576,70 @@ distinct confirming action before the code is minted; plus a cap on how many
 mass-authorization tripwire). No ML classifier (D-10).
 
 **Verdict:** APPROVED (maintainer, 2026-08-08).
+
+## D-25 — Post-loop sequencing: all of WP-09 next (sign-at-release), validation trial gated behind it
+
+**Decision (maintainer, 2026-08-22, after the first real-client A→B→A loop
+worked — `ca5718c`):** the next engineering block is **the whole of WP-09**, and
+the cross-person trial that kill criterion 3 (§8) measures is gated behind it.
+The WP order until now predated a working loop; this re-sequences it. Nine
+sub-decisions, each taken deliberately:
+
+1. **WP-09 in full**, not a notify-only slice. Rejected: shipping only the
+   listen+notify part before the trial. It is the only path that puts
+   `internal/redact` and `envelope.Sign` on a live path and so closes the last
+   two legs of **R-12** — the credibility gap on a security product.
+2. **Signing happens at release, not at submit — T-19.** The relay holds the
+   draft unsigned, and on human approval requests a signature over the final
+   (possibly edited) bytes from the author's daemon. A signature then means
+   exactly "this text was approved". Accepted costs: a relay-side signing-request
+   queue, and release depending on daemon liveness. Reinstating a daemon submit
+   path does **not** reinstate the WP-08 **C1** gate bypass — the gate stays
+   server-side and authoritative, and the daemon never releases.
+3. **D-12 stands unchanged**: redaction is client-side, the relay gets no
+   backstop. Redacting at the `/mcp` boundary was considered as a cheap way to
+   close R-12's widest leg early (the built-and-tested `internal/redact` has no
+   caller, so a pasted secret reaches the wire today) and **rejected**, because
+   WP-09 puts redaction where D-12 always said it belongs — on the sender's
+   machine, before the bytes leave it — making the relay-side variant a claim
+   that would have to be narrowed later.
+4. **The trial waits for the finished daemon.** Rejected: recruiting in parallel
+   and letting participants upgrade mid-trial. The cohort is a one-shot resource;
+   they get the finished product.
+5. **Cohort clients: Claude Code + Codex.** Claude Code is the only client
+   validated end-to-end; Codex arrives free with ST-7's stdio server. Browser
+   clients (claude.ai / ChatGPT) stay out — they would pull in a browser
+   enrollment page (today even a browser-only user must run the CLI once to get a
+   device credential) plus spike S-04. Revisit only if a real recruit needs it.
+6. **Docker/Compose is the documented default deploy** (a Coolify-class host),
+   with the binary + Caddy walkthrough kept as the no-container alternative. The
+   container needs **one persistent volume covering both the SQLite file and
+   `signing.key`**; TLS moves to the platform. This changes `docs/deploy/` and
+   the site's self-host page.
+7. **Measurement instrumentation lands before the trial, not after.** Thread id
+   added to the `send_message` / `approve_message` / `approve_reply` INFO lines
+   (ids only — T-18 intact). Distinct pairs come from the permanent `threads`
+   table, per-pair volume and approval latency from those lines. It cannot be
+   backfilled, which is the whole reason it is a decision.
+8. **WP-10 deferred past the trial.** The daemon's own OS notification is the v1
+   push UX; the channels bridge and prompt-submit hook wait for observed friction,
+   which also lets **R-02** (the preview's flag/allowlist status) resolve itself.
+9. **Public proof is a recorded demo, not a landing page.** A 60–90 s terminal
+   capture of the real two-session loop, into the README slot and the docs home;
+   docs.askrelay.dev already does the landing-page job. Cohort *sourcing* is
+   deliberately left open until WP-09 lands.
+
+**Owed before the next push (R-12, honesty standard):** README claims signed
+envelopes, client-side secret redaction, and "deleted after delivery" as live —
+none is true on the shipped path (nothing acks, so bodies live to the 30-day hard
+TTL), and it still lists `device` among pending CLI verbs. docs.askrelay.dev is
+already correct on all of it. The `ca5718c` docs mirror is also still owed.
+
+**Recorded risk, knowingly accepted (maintainer, 2026-08-22):** choosing the full
+daemon over an earlier trial puts kill criterion 2's **2026-10-15** deploy date
+at risk, and criterion 3 needs 8 observation weeks against a 2027-01-31 hard
+stop. The maintainer accepted this after seeing the arithmetic and declined to
+re-sequence around the dates. If criterion 2 is missed, the response is that
+criterion's own instruction — **cut v1 scope, never extend the timeline**.
+
+**Verdict:** APPROVED (maintainer, 2026-08-22).

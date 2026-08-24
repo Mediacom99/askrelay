@@ -20,8 +20,9 @@ const (
 	// sleeping laptop / dropped NAT session has nothing to cancel otherwise).
 	writeTimeout = 10 * time.Second
 	// revokeCheckInterval bounds how long a revoked device's idle socket can
-	// linger — the reconcile loop severs it (also catches out-of-process revokes
-	// via the `device revoke` CLI, which the running relay never sees directly).
+	// linger — the reconcile loop severs it (also catches out-of-process revokes,
+	// which the running relay never sees directly: today a direct UPDATE of
+	// devices.revoked_at, and the `device revoke` CLI once WP-12 lands).
 	revokeCheckInterval = 15 * time.Second
 )
 

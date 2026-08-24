@@ -21,12 +21,12 @@ cites a decision. Dependency pins in §3 were verified against live sources on
 | WP-06 | relay OAuth: embedded AS + client registration — AS "login" is device-credential paste (Option A, D-24); CIMD now fetch+validate (SSRF-guarded), validated against a real Claude Code client 2026-08 | DONE (PR #11, amended) | WP-05 | T-06 |
 | WP-07 | relay MCP surface (tools + spotlighting) | DONE | WP-01 WP-02 WP-03 WP-05 | T-07 T-08 T-10 |
 | WP-08 | WS hub, delivery, retention sweeper | DONE | WP-03 WP-04 | T-04 T-09 |
-| WP-09 | daemon core (enroll, queue, stdio MCP) | TODO | WP-01 WP-07 WP-08 WP-11 | T-11 |
-| WP-10 | daemon ↔ Claude Code push (channels + hooks) | TODO | WP-09 | S-01 |
+| WP-09 | daemon core (listen+notify, queue, redact→sign, stdio MCP, sign-at-release submit) — **NEXT** (D-25); ST-1 skeleton done | IN PROGRESS | WP-01 WP-07 WP-08 WP-11 | T-11 T-19 |
+| WP-10 | daemon ↔ Claude Code push (channels + hooks) — **DEFERRED past the trial (D-25)**; the daemon's OS notification is the v1 push UX | DEFERRED | WP-09 | S-01 |
 | WP-11 | `internal/redact` — secret redaction | DONE | — | T-12 |
 | WP-12 | CLI verbs — `enroll` + `device list\|revoke` DONE; `inbox`, `approve`, `status` TODO | partial | WP-04 WP-08 | T-05 |
 | WP-13 | end-to-end harness + golden flows | TODO | WP-06 WP-07 WP-08 WP-09 | — |
-| WP-14 | packaging (Docker, GoReleaser, brew, npm wrapper) | TODO | WP-13 | T-13 |
+| WP-14 | packaging — **Docker/Compose is now the documented default deploy (D-25)**; then release binaries. brew + npm wrapper deferred | TODO | WP-13 | T-13 |
 | WP-15 | docs & security finalization | TODO | WP-13 | — |
 | WP-16 | hosted-demo hardening | TODO | WP-14 WP-15 | checklist Gate 0 done (D-08) |
 
@@ -271,6 +271,20 @@ reference and bind every WP.
   the offending content; the durable consent audit trail (grant/approval rows)
   lives in the store (WP-03), not in logs. Logging happens only at boundaries
   (T-17). *APPROVED (maintainer, 2026-07-23).*
+- **T-19 — The daemon signs at RELEASE, not at submit.** An outbound draft is
+  stored unsigned; when the human approves it (`approve_reply`, optionally with
+  `edited_text`), the relay requests a signature over the final canonical bytes
+  from the author's daemon, verifies it, and only then delivers. So a signature
+  means exactly "this text was approved", which sign-at-submit cannot claim once
+  an edit is possible. Consequences accepted with the decision: the relay owns a
+  short-lived signing-request queue; release depends on daemon liveness, and with
+  no daemon connected the draft stays `pending_review` (degraded, never
+  auto-released and never delivered unsigned once the author has a daemon);
+  reinstating a daemon submit path does **not** reinstate the WP-08 **C1**
+  bypass, because the approval gate stays server-side and authoritative and the
+  daemon never releases. Rejected: sign-at-submit (cheaper, no liveness
+  coupling, but a human edit invalidates the signature or forces a re-sign
+  round trip). *APPROVED (maintainer, 2026-08-22 — D-25).*
 
 ## 6. Work packages
 
@@ -615,21 +629,57 @@ Nothing to change; worth stating because D-23 makes self-talk the first-user pat
 
 ### WP-09 — daemon core
 
-**Status:** TODO · **Depends on:** WP-01 WP-07 WP-08 WP-11 · **Gated by:**
-T-11 · **Spec:** arch §6, §7.
+**Status:** IN PROGRESS (ST-1 done) · **Depends on:** WP-01 WP-07 WP-08 WP-11 ·
+**Gated by:** T-11 T-19 · **Spec:** arch §6, §7; D-25.
 
-**Goal:** `askrelay daemon`: enroll flow writing config+key (0600); WS client
-with jittered reconnect; offline outbound queue; redaction before signing;
-stdio MCP server exposing the same §5.1 toolset for Codex/local clients; OS
-notification emit (macOS/Linux).
+**Goal:** `askrelay daemon`: config+key loading (0600, written by `enroll`); WS
+client with jittered reconnect; OS notification emit (macOS/Linux); offline
+outbound queue; redaction before signing; **sign-at-release (T-19)**; stdio MCP
+server exposing the same §5.1 toolset for Codex/local clients.
+
+**Subtasks (D-22 loop):**
+
+| ST | Scope |
+|---|---|
+| ST-1 | skeleton: `internal/daemon` + `askrelay daemon` verb + `daemon.Config` single-sourced with `enroll` — **DONE** |
+| ST-2 | WS client: device-credential auth, jittered reconnect, read loop. **Sends no `ack`** — see below |
+| ST-3 | OS notification on mail (macOS `osascript` / Linux `notify-send`), degrading to a log line |
+| ST-4 | offline outbound queue |
+| ST-5 | redact→sign ordering, with the tamper test that proves the order |
+| ST-6 | sign-at-release submit path (T-19) + the relay-side signing-request queue — **security pass earned on its own** |
+| ST-7 | stdio MCP server (the WP-07 tool table, locally) — this is what makes Codex a supported client (D-25) |
+| ST-8 | three-agent quality pass |
+
+**ST-2 ack invariant:** nothing on the live MCP path acks a message today
+(`check_inbox` never calls `MarkDelivered`/`Ack`), so bodies survive to the hard
+TTL. A listening daemon that acked would arm the ack-grace sweeper against a
+message its human has not read yet. The notify path therefore reads and never
+acks; acking belongs with a consumer that has actually shown the message to a
+human.
+
+**ST-2 credential note:** `enroll` prints the long-lived device credential today
+but does not persist it, and `/ws` authenticates with exactly that credential —
+so ST-2 adds `device_credential` to the 0600 config. New at-rest location for an
+already-printed secret; docs must say so (self-host + security pages).
+
+**Measurement instrumentation (D-25, lands with this WP):** add the thread id to
+the `send_message` / `approve_message` / `approve_reply` INFO lines — ids only,
+T-18 intact. Pairs come from the permanent `threads` table, per-pair volume and
+approval latency from those log lines. It cannot be backfilled, so it ships
+before the trial cohort exists, not after.
 
 **Test plan:** offline→online queue flush; redaction applied before signature
-(tamper check proves order); stdio server passes the WP-07 tool table run
-locally.
+(tamper check proves order); a released draft whose author has no daemon
+connected stays `pending_review` and is never delivered unsigned; an edited
+draft's signature covers the edited bytes; stdio server passes the WP-07 tool
+table run locally.
 
 ### WP-10 — daemon ↔ Claude Code push
 
-**Status:** TODO · **Depends on:** WP-09 · **Gated by:** spike S-01 ·
+**Status:** DEFERRED past the validation trial (D-25) — the daemon's own OS
+notification (WP-09 ST-3) is the v1 push UX; revisit on observed trial friction,
+which also gives R-02 time to resolve · **Depends on:** WP-09 · **Gated by:**
+spike S-01 ·
 **Spec:** arch §6 (push paths).
 
 **Goal:** channels bridge (stdio MCP server with `claude/channel` capability
@@ -740,6 +790,23 @@ non-Kosmoy orgs, or a first unsolicited purchase request).
 
 *(append-only; every entry names the WPs it changed)*
 
+- 2026-08-22 — **Strategy session: the roadmap re-sequenced against the
+  post-loop reality (D-25, T-19).** No code; the WP order predated a working
+  end-to-end loop. Verified against source rather than memory, and several
+  beliefs turned out stale: `store.RevokeDevice` **does** have a CLI now (R-12's
+  third leg closed in ca5718c, risk text corrected here); the MCP path **never
+  acks** (`check_inbox` calls neither `MarkDelivered` nor `Ack`), so bodies live
+  to the 30-day hard TTL and "deleted after delivery" is wrong wherever it is
+  claimed; `/ws` authenticates with the **device credential**, which `enroll`
+  prints but does not persist — so any listening daemon needs it stored; and the
+  per-`tools/call` INFO line carries no thread id, so pairs are derivable
+  (permanent `threads` rows) but per-pair volume and approval latency are not.
+  Outcome: **all of WP-09 is next** with signing at release (T-19), WP-10
+  deferred, and the trial gated behind the daemon — full rationale and the nine
+  sub-decisions in D-25. Also recorded there: the honesty pass owed on README
+  (it claims signed envelopes, client-side redaction, and delete-on-delivery as
+  live; docs.askrelay.dev is already correct) and the docs mirror owed for
+  `ca5718c` before it is pushed. Changed: WP-09, WP-10, WP-14, R-12, §5 T-19.
 - 2026-08-17 — **First real-client message-passing loop worked end-to-end**
   (Claude Code A → relay → Claude Code B → back), and the manual dogfood surfaced
   a cluster of product/UX/security findings, all fixed in-session:
@@ -1068,4 +1135,4 @@ market-verdict.md.
 | R-09 | A vendor ships first-party cross-person session messaging | Niche compresses (prior-art.md: Claude Tag expansion) | Phase 6 market research watches this; our moat is cross-vendor + self-hosted + OSS |
 | R-10 | DCR removed from the final MCP auth story before claude.ai migrates to CIMD | WP-06 registration path churn | Ship both DCR + CIMD (arch §4.4); S-03 re-checks the auth chapter of the 2026-07-28 final |
 | R-11 | Cold-start / retention network effect — value requires the other person also on it and responsive; a solo installer churns (askmesh's likely killer, S-05) | The core existential risk; OSS/self-host/zero-install do NOT fix it | Kosmoy whole-team dogfood adopts all-at-once (not solo trials); kill criterion 3 measures retention not trial; onboard in pairs; make first-run useful even before a reply lands (e.g. same-owner cross-machine, D-19/C3) |
-| R-12 | Three controls the pitch leans on are implemented but **unreachable on the shipped path**: `internal/redact` (WP-11 DONE) has no non-test caller, `envelope.Sign`/`Verify` have no non-test caller, and `store.RevokeDevice` has no CLI or route. Today's only working path (MCP clients) sends unsigned, unredacted text, and revoking a device needs a direct DB write | Credibility gap on a security product, not a code defect. The docs site described all three in the present tense until the 2026-08-11 audit corrected it. Widest exposure is redaction: a pasted secret reaches the wire with only the human approval gate in front of it | WP-09 wires redaction-before-signing and daemon-side verification (its test plan already asserts that order); WP-12 adds `device list\|revoke`. Until each closes, docs.askrelay.dev marks it and self-host documents the `UPDATE devices SET revoked_at` fallback. Do not describe any of the three as live — in README, CLAUDE.md, or the site — before its WP closes |
+| R-12 | Three controls the pitch leans on are implemented but **unreachable on the shipped path**: `internal/redact` (WP-11 DONE) has no non-test caller, `envelope.Sign`/`Verify` have no non-test caller, and `store.RevokeDevice` had no CLI or route. **Third leg CLOSED 2026-08-18 (ca5718c): `askrelay device list\|revoke` shipped.** Today's only working path (MCP clients) still sends unsigned, unredacted text | Credibility gap on a security product, not a code defect. The docs site described all three in the present tense until the 2026-08-11 audit corrected it. Widest exposure is redaction: a pasted secret reaches the wire with only the human approval gate in front of it | WP-09 — now the next WP (D-25) — wires redaction-before-signing and sign-at-release verification (T-19; its test plan asserts that order). The `device list\|revoke` half is done. Until each closes, docs.askrelay.dev marks it and self-host documents the `UPDATE devices SET revoked_at` fallback. Do not describe any of the three as live — in README, CLAUDE.md, or the site — before its WP closes |
