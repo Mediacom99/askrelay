@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Mediacom99/askrelay/internal/daemon"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
 
@@ -43,7 +44,7 @@ func TestCmdEnroll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	var dc deviceConfig
+	var dc daemon.Config
 	if err := json.Unmarshal(raw, &dc); err != nil {
 		t.Fatalf("unmarshal config: %v", err)
 	}

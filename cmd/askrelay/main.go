@@ -23,6 +23,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/Mediacom99/askrelay/internal/daemon"
 	"github.com/Mediacom99/askrelay/internal/relay"
 	"github.com/Mediacom99/askrelay/internal/relay/oauth"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
@@ -45,6 +46,8 @@ func main() {
 		err = cmdEnroll(args)
 	case "device":
 		err = cmdDevice(args)
+	case "daemon":
+		err = cmdDaemon(args)
 	case "version":
 		fmt.Println(relay.Version)
 	case "help", "-h", "--help":
@@ -70,6 +73,7 @@ commands:
   invite <email>    mint a single-use enrollment invite, print the invite URL
   enroll <url>      enroll this machine as a device from an invite URL
   device list|revoke  list or revoke enrolled devices (relay host)
+  daemon            run the local daemon (push, redact+sign, stdio MCP)
   version           print version
   help              show this help
 `)
@@ -157,19 +161,11 @@ type enrollResp struct {
 	DeviceCredential string `json:"device_credential"`
 }
 
-// deviceConfig is the arch §7 user config: relay URL, person, device-key path.
-// The credential is printed (for the browser paste), not stored — no consumer
-// persists it until the WP-09 daemon does.
-type deviceConfig struct {
-	RelayURL string `json:"relay_url"`
-	PersonID string `json:"person_id"`
-	DeviceID string `json:"device_id"`
-	KeyPath  string `json:"device_key_path"`
-}
-
 // cmdEnroll consumes an invite URL, enrolls this machine as a device, writes the
 // user config + private key (0600) under ~/.config/askrelay, and prints the
-// device credential to paste when connecting an AI client. Colleague-side: it
+// device credential to paste when connecting an AI client. The credential is
+// also stored in the config, because `askrelay daemon` authenticates /ws with
+// it (WP-09 ST-2) — which is why that file is 0600 and never logged. Colleague-side: it
 // talks to the relay over HTTP (unlike invite/device, which open the DB).
 func cmdEnroll(args []string) error {
 	var inviteURL string
@@ -216,8 +212,9 @@ func cmdEnroll(args []string) error {
 	if err := os.WriteFile(keyPath, priv, 0o600); err != nil {
 		return fmt.Errorf("askrelay: write device key: %w", err)
 	}
-	buf, _ := json.MarshalIndent(deviceConfig{
+	buf, _ := json.MarshalIndent(daemon.Config{
 		RelayURL: resp.BaseURL, PersonID: resp.PersonID, DeviceID: resp.DeviceID, KeyPath: keyPath,
+		DeviceCredential: resp.DeviceCredential, // the daemon's /ws bearer — 0600 below
 	}, "", "  ")
 	if err := os.WriteFile(path, buf, 0o600); err != nil {
 		return fmt.Errorf("askrelay: write config: %w", err)
@@ -355,6 +352,32 @@ func cmdDeviceRevoke(args []string) error {
 	}
 	fmt.Printf("revoked device %s\n", deviceID)
 	return nil
+}
+
+// cmdDaemon runs the local daemon (arch §6): loads the enroll config + device
+// key and runs until a signal.
+func cmdDaemon(args []string) error {
+	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+	cfgPath := fs.String("config", "", "config file path (default ~/.config/askrelay/config.json)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	path := *cfgPath
+	if path == "" {
+		p, _, err := configPaths("")
+		if err != nil {
+			return err
+		}
+		path = p
+	}
+	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	d, err := daemon.Load(path, log)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return d.Run(ctx)
 }
 
 func envOr(key, def string) string {
