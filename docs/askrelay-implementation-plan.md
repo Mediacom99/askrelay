@@ -285,6 +285,32 @@ reference and bind every WP.
   daemon never releases. Rejected: sign-at-submit (cheaper, no liveness
   coupling, but a human edit invalidates the signature or forces a re-sign
   round trip). *APPROVED (maintainer, 2026-08-22 — D-25).*
+  **AMENDED the same day, before any code:** sign-at-release is sound **only for
+  drafts that passed through the author's daemon**. For a draft created directly
+  against `/mcp` (the architecture's own "Claude Code (remote, no daemon)"
+  profile, §5.4), the daemon has no independent record of what it is being asked
+  to sign — so a compromised relay could obtain a signature over arbitrary bytes
+  from any online daemon, which is strictly worse than the relay attestation we
+  already have, and destroys the property device signatures exist for. Therefore
+  a signature is requested **only** for daemon-mediated drafts; direct-HTTP
+  drafts stay relay-attested and are labelled as such in the spotlight
+  provenance line (`device verified` vs relay-attested), so the distinction is
+  visible to the recipient instead of buried in docs. Same limit applies to
+  D-12 redaction: it can only run where the daemon is in the *creation* path.
+  Sequencing consequence: **ST-7 (stdio MCP server) precedes ST-5/ST-6**, and the
+  daemon-mediated path is the recommended cohort setup. *(maintainer, 2026-08-22.)*
+- **T-20 — `/mcp` accepts a device credential as an alternative bearer.** The
+  daemon's stdio server (ST-7) must make authenticated tool calls, and `/mcp`
+  accepted only OAuth access tokens. The bearer middleware now also verifies a
+  `use="device"` credential and, on success, re-checks `store.ActiveDeviceByID`
+  per request. **No privilege escalation:** by D-24 the same credential is what
+  the AS login consumes to mint access tokens, so a stolen credential already
+  yielded full tool access — this only skips a browser-shaped dance. It is in
+  fact *more* revocable than the OAuth path, which has no per-request device
+  check (access tokens live to expiry). Rejected: the daemon running the OAuth
+  flow against itself (a machine doing a browser dance, plus a refresh loop);
+  duplicating the tool surface as `/ws` frames (a second protocol for the same
+  operations). *APPROVED (maintainer, 2026-08-22).*
 
 ## 6. Work packages
 
@@ -630,7 +656,7 @@ Nothing to change; worth stating because D-23 makes self-talk the first-user pat
 ### WP-09 — daemon core
 
 **Status:** IN PROGRESS (ST-1 done) · **Depends on:** WP-01 WP-07 WP-08 WP-11 ·
-**Gated by:** T-11 T-19 · **Spec:** arch §6, §7; D-25.
+**Gated by:** T-11 T-19 T-20 · **Spec:** arch §6, §7; D-25.
 
 **Goal:** `askrelay daemon`: config+key loading (0600, written by `enroll`); WS
 client with jittered reconnect; OS notification emit (macOS/Linux); offline
@@ -644,10 +670,10 @@ server exposing the same §5.1 toolset for Codex/local clients.
 | ST-1 | skeleton: `internal/daemon` + `askrelay daemon` verb + `daemon.Config` single-sourced with `enroll` — **DONE** |
 | ST-2 | WS client: device-credential auth, jittered reconnect, read loop. **Sends no `ack`** — see below |
 | ST-3 | OS notification on mail (macOS `osascript` / Linux `notify-send`), degrading to a log line |
-| ST-4 | offline outbound queue |
-| ST-5 | redact→sign ordering, with the tamper test that proves the order |
-| ST-6 | sign-at-release submit path (T-19) + the relay-side signing-request queue — **security pass earned on its own** |
-| ST-7 | stdio MCP server (the WP-07 tool table, locally) — this is what makes Codex a supported client (D-25) |
+| ST-4 | stdio MCP server (the WP-07 tool table, locally) over a device-credential-authenticated relay path (T-20) — **moved ahead of the queue and of signing: it is the only path on which redaction and signatures mean anything** (T-19 amendment) |
+| ST-5 | redact→sign ordering on that path, with the tamper test that proves the order |
+| ST-6 | sign-at-release (T-19) + the relay-side signing-request queue — **security pass earned on its own** |
+| ST-7 | offline outbound queue (last: it holds *signed* outbound, so building it earlier means building it twice) |
 | ST-8 | three-agent quality pass |
 
 **ST-2 ack invariant:** nothing on the live MCP path acks a message today

@@ -642,4 +642,21 @@ stop. The maintainer accepted this after seeing the arithmetic and declined to
 re-sequence around the dates. If criterion 2 is missed, the response is that
 criterion's own instruction — **cut v1 scope, never extend the timeline**.
 
+**Amendment (maintainer, 2026-08-22, same session, before any of WP-09's
+outbound path was written):** sub-decisions 1 and 3 carry a limit that only
+surfaced when we looked for where redaction could physically sit. Both
+redaction *and* signatures are meaningful **only where the daemon is in the send
+path** — its stdio server. The architecture's own §5.4 matrix lists "Claude Code
+(remote, no daemon)", which is exactly the setup validated in `ca5718c`: the
+draft is created from raw text inside the relay, with no daemon involved. So
+R-12's redaction leg does not close for direct-HTTP clients, and a signature
+requested at release for a draft the daemon never saw would let a compromised
+relay obtain a signature over arbitrary bytes (see the T-19 amendment).
+Consequences: the stdio server moves ahead of redaction and signing in WP-09's
+subtask order; the cohort is onboarded onto the daemon-mediated path so the trial
+actually exercises push, redaction, and signing; direct-HTTP clients stay
+relay-attested and unredacted, labelled in the recipient's provenance line rather
+than in a footnote. D-12 itself still stands unamended — redaction stays
+client-side; what changed is our honesty about which clients it reaches.
+
 **Verdict:** APPROVED (maintainer, 2026-08-22).

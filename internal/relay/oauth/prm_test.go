@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -45,7 +46,8 @@ func probe(w http.ResponseWriter, r *http.Request) {
 
 func TestBearerMiddleware(t *testing.T) {
 	iss := testIssuer(t)
-	mw := NewBearerMiddleware(iss, testAud, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	// nil device check: device credentials are refused, the pre-T-20 behaviour.
+	mw := NewBearerMiddleware(iss, testAud, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	handler := mw(http.HandlerFunc(probe))
 
 	serve := func(authHeader string) *httptest.ResponseRecorder {
@@ -89,9 +91,69 @@ func TestBearerMiddleware(t *testing.T) {
 		}
 	}
 
-	// A DEVICE credential presented as a bearer token → 401 (use separation).
+	// A DEVICE credential with no device check wired → 401. Accepting one is
+	// opt-in (T-20): a relay that does not pass a check keeps use separation.
 	device, _ := iss.MintDeviceCredential("person-1", "device-1", time.Now().UTC())
 	if rec := serve("Bearer " + device); rec.Code != http.StatusUnauthorized {
-		t.Errorf("device credential as bearer: status = %d, want 401", rec.Code)
+		t.Errorf("device credential, no check wired: status = %d, want 401", rec.Code)
+	}
+}
+
+// T-20: the daemon authenticates /mcp with its device credential. The device is
+// re-checked on EVERY request, so revocation severs it immediately — the
+// property the OAuth path cannot offer (access tokens live to expiry).
+func TestBearerMiddlewareDeviceCredential(t *testing.T) {
+	iss := testIssuer(t)
+	var checked [][2]string
+	var checkErr error
+	mw := NewBearerMiddleware(iss, testAud, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		func(person, device string) error {
+			checked = append(checked, [2]string{person, device})
+			return checkErr
+		})
+	handler := mw(http.HandlerFunc(probe))
+	serve := func(token string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/mcp", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	device, err := iss.MintDeviceCredential("person-1", "device-1", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("MintDeviceCredential: %v", err)
+	}
+
+	// Active device → 200, stamped as the daemon profile (device credentials
+	// carry no client_type claim of their own).
+	if rec := serve(device); rec.Code != http.StatusOK || rec.Body.String() != "person-1|"+ClientTypeDaemon {
+		t.Errorf("active device: status=%d body=%q, want 200 person-1|%s", rec.Code, rec.Body.String(), ClientTypeDaemon)
+	}
+	if want := [][2]string{{"person-1", "device-1"}}; len(checked) != 1 || checked[0] != want[0] {
+		t.Errorf("store check got %v, want exactly one call with %v", checked, want)
+	}
+
+	// Revoked device (or a person/device mismatch — both surface as an error
+	// from the relay's check) → 401, on the very next request.
+	checkErr = errors.New("revoked")
+	if rec := serve(device); rec.Code != http.StatusUnauthorized {
+		t.Errorf("revoked device: status = %d, want 401", rec.Code)
+	}
+	if len(checked) != 2 {
+		t.Errorf("store consulted %d times, want 2 — the check must run per request", len(checked))
+	}
+
+	// An ACCESS token still works through the same middleware, unchanged.
+	checkErr = nil
+	access, err := iss.Mint("person-2", "claude.ai", time.Now().UTC())
+	if err != nil {
+		t.Fatalf("Mint: %v", err)
+	}
+	if rec := serve(access); rec.Code != http.StatusOK || rec.Body.String() != "person-2|claude.ai" {
+		t.Errorf("access token: status=%d body=%q, want 200 person-2|claude.ai", rec.Code, rec.Body.String())
+	}
+	if len(checked) != 2 {
+		t.Errorf("store consulted %d times; an access token must not hit the device check", len(checked))
 	}
 }

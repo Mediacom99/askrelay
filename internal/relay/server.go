@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -42,7 +43,18 @@ type Server struct {
 // be non-nil.
 func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger) *Server {
 	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux(), hub: newHub()}
-	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL, log)
+	// T-20: /mcp also accepts a daemon's device credential. The store checks
+	// mirror /ws exactly — active device, and the credential's person owns it.
+	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL, log, func(person, device string) error {
+		dev, err := st.ActiveDeviceByID(device)
+		if err != nil {
+			return err
+		}
+		if dev.PersonID != person {
+			return fmt.Errorf("relay: device %s does not belong to the credential's person", device)
+		}
+		return nil
+	})
 	s.fetchCIMD = newCIMDFetcher().get
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("GET /brand/{name}", s.handleBrand)
