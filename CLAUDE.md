@@ -42,9 +42,13 @@ the first users; OSS (Apache-2.0 + DCO, no CLA) from day one.
 - Dependencies enter only at the plan §3 pins, only when a WP first imports
   them. `go.mod` now carries the five pins those WPs pulled in (`go-sdk`,
   `modernc.org/sqlite`, `coder/websocket`, `golang-jwt/v5`, `google/uuid`) —
-  all matching §3 exactly. `internal/daemon` and `internal/redact` are still
-  `doc.go`-only placeholders citing their architecture sections (WP-09/WP-10
-  and WP-11); every other package is implemented.
+  all matching §3 exactly. `internal/daemon` is still a `doc.go`-only
+  placeholder citing its architecture sections (WP-09/WP-10); every other
+  package is implemented. `internal/redact` is implemented (WP-11 DONE) but has
+  **no caller outside tests** — it runs client-side and its caller is the
+  daemon, so redaction does not yet happen on any live path. The same is true of
+  `envelope.Sign`/`Verify`: implemented, tested, and unreferenced until WP-09
+  wires the daemon-signed submit. See risk R-12.
 
 ## Standing constraints (full rationale in the decision log)
 
@@ -81,3 +85,42 @@ CI (`.github/workflows/ci.yml`): build, vet, test, golangci-lint.
 editing any markdown doc listed in `docs/tools/build-overview.py` (or
 README.md / this file), run `make overview` and commit the regenerated HTML in
 the same commit.
+
+### The public site must not lag a push
+
+**Commit locally as much as you like — nothing is required.** But **before
+`git push`**, check whether the pushed commits change anything
+[docs.askrelay.dev](https://docs.askrelay.dev) states, and update the
+[`askrelay-docs`](https://github.com/Mediacom99/askrelay-docs) repo in the same
+sitting if so. That site auto-deploys on push to its `main`, so a stale claim
+goes public the moment it merges — and it is a security product, where a wrong
+claim about signing, redaction, or revocation is worse than no claim.
+
+Push touches the docs whenever it changes any of:
+
+- a CLI verb, a `serve` flag, or a default
+- an HTTP route, an MCP tool, or a tool annotation
+- a thread/draft state transition, a retention or freshness horizon, or a size cap
+- a work-package status — a WP closing usually turns a `<Readiness>` block into
+  plain prose, or `partial` into `shipped`
+- anything listed in risk **R-12** becoming reachable on the shipped path
+
+Then, in `askrelay-docs`: fix the affected pages, update their `<Readiness>`
+blocks and the `readiness:` frontmatter mirror, and re-stamp every page's
+`askrelayVersion` / `askrelayCommit` / `verifiedOn`. The procedure — including
+how to derive the version and why a SHA beats an invented tag — is under
+"Re-stamping the docs" in that repo's README.md. `npm run build` enforces the
+stamp and the readiness rules, so a half-done update fails rather than ships.
+
+Standing rule from R-12: **never describe a control as live before its WP
+closes** — not here, not in README.md, not on the site.
+
+This is enforced, not just documented. Run **`make hooks`** once per clone to
+enable `.githooks/pre-push`, which blocks a push whose documented surface has
+moved ahead of the docs' stamp. It fires only on files that define something the
+site states — and for the implementation plan, only when the §1 work-package
+status board actually changes, so ordinary learnings-log and risk-register edits
+pass. Bypass with `git push --no-verify` or `ASKRELAY_SKIP_DOCS_CHECK=1` when a
+push genuinely changes nothing the site states; if you find yourself bypassing
+often, the trigger list in the hook is wrong — narrow it rather than habituating
+to the escape hatch.

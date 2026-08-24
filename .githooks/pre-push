@@ -1,0 +1,139 @@
+#!/bin/sh
+# pre-push: refuse to publish code whose documented surface has moved ahead of
+# docs.askrelay.dev.
+#
+# Why a hook: askrelay-docs auto-deploys on push to its main, so a stale claim
+# goes public the moment code merges — and this is a security product, where a
+# wrong claim about signing, redaction, or revocation is worse than no claim.
+# CLAUDE.md ("The public site must not lag a push") states the rule; this
+# enforces it.
+#
+# It fires ONLY when a push touches a file that defines something the site
+# states (see SURFACE below) — not on every commit. Local commits are never
+# affected; this runs at push time only.
+#
+# Install:  make hooks
+# Bypass:   git push --no-verify   (or set ASKRELAY_SKIP_DOCS_CHECK=1)
+
+set -u
+
+[ "${ASKRELAY_SKIP_DOCS_CHECK:-0}" = "1" ] && exit 0
+
+ZERO='0000000000000000000000000000000000000000'
+
+# Files that define the documented surface. A change anywhere else (internal
+# refactor, new test, unrelated helper) does not trip the hook. Deliberately
+# specific: a hook that cries wolf gets --no-verify'd into uselessness. If you
+# document something new, add its file here.
+SURFACE='^(cmd/askrelay/|internal/a2a/|internal/gate/|internal/redact/|internal/relay/mcp/|internal/envelope/envelope\.go|internal/relay/(config|server|enroll|ws)\.go|internal/relay/oauth/(as|device)\.go|internal/relay/store/(retention|oauth|identity)\.go)'
+
+# The implementation plan is a special case. It is edited constantly (learnings
+# log, risk register, decision entries) without changing anything the site
+# states — so the file alone is too coarse a trigger. Only a change to the §1
+# status-board rows ("| WP-07 | … | DONE | …") can flip a <Readiness> block, so
+# that is what we look for.
+PLAN='docs/askrelay-implementation-plan.md'
+WP_ROW='^[-+]\| WP-[0-9]'
+
+# Locate the docs checkout: explicit override, else the conventional sibling.
+DOCS_DIR="${ASKRELAY_DOCS_DIR:-$(git rev-parse --show-toplevel)/../askrelay-docs}"
+
+changed=''
+tip=''
+
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+	# Branch deletion — nothing to check.
+	[ "$local_sha" = "$ZERO" ] && continue
+
+	if [ "$remote_sha" = "$ZERO" ]; then
+		# New branch on the remote: compare against the upstream default if we
+		# have it, otherwise fall back to this commit alone rather than
+		# rescanning all of history.
+		base=$(git rev-parse --verify --quiet origin/main) || base=''
+		if [ -n "$base" ]; then
+			range="$base..$local_sha"
+		else
+			range="$local_sha^!"
+		fi
+	else
+		range="$remote_sha..$local_sha"
+	fi
+
+	files=$(git diff --name-only "$range" 2>/dev/null | grep -Ev '_test\.go$' | grep -E "$SURFACE") || true
+
+	# Add the plan only when its work-package status board actually moved.
+	if git diff --name-only "$range" 2>/dev/null | grep -qx "$PLAN"; then
+		if git diff -U0 "$range" -- "$PLAN" 2>/dev/null | grep -qE "$WP_ROW"; then
+			files="$files
+$PLAN (work-package status changed)"
+		fi
+	fi
+	files=$(printf '%s' "$files" | grep -v '^$') || true
+
+	if [ -n "$files" ]; then
+		changed="$changed$files
+"
+		tip="$local_sha"
+	fi
+done
+
+# Nothing surface-touching in this push.
+[ -z "$tip" ] && exit 0
+
+if [ ! -d "$DOCS_DIR/src/content/docs" ]; then
+	echo "askrelay: pre-push — docs checkout not found at $DOCS_DIR" >&2
+	echo "  This push changes the documented surface, but the docs repo isn't here" >&2
+	echo "  to check against. Set ASKRELAY_DOCS_DIR, or verify docs.askrelay.dev by hand." >&2
+	echo "  Allowing the push." >&2
+	exit 0
+fi
+
+pushed_short=$(git rev-parse --short "$tip")
+
+# Every page carries the stamp; they must all agree, or a previous update was
+# left half-done.
+stamps=$(grep -h '^askrelayCommit:' "$DOCS_DIR"/src/content/docs/*.mdx 2>/dev/null |
+	awk '{print $2}' | tr -d '\r' | sort -u)
+
+if [ -z "$stamps" ]; then
+	echo "askrelay: pre-push — no askrelayCommit stamp found in $DOCS_DIR" >&2
+	exit 1
+fi
+
+if [ "$(printf '%s\n' "$stamps" | wc -l | tr -d ' ')" -gt 1 ]; then
+	echo >&2
+	echo "askrelay: pre-push BLOCKED — the docs stamps disagree with each other:" >&2
+	printf '  %s\n' $stamps >&2
+	echo "  A previous re-stamp was left half-finished. Fix it before pushing." >&2
+	echo >&2
+	exit 1
+fi
+
+# Prefix comparison: the two repos may abbreviate SHAs to different lengths.
+case "$pushed_short" in
+	"$stamps"*) exit 0 ;;
+esac
+case "$stamps" in
+	"$pushed_short"*) exit 0 ;;
+esac
+
+echo >&2
+echo "askrelay: pre-push BLOCKED — docs.askrelay.dev would go stale." >&2
+echo >&2
+echo "  This push changes the documented surface:" >&2
+printf '%s' "$changed" | sed 's/^/    /' | sort -u >&2
+echo >&2
+echo "  docs stamped at: $stamps" >&2
+echo "  pushing:         $pushed_short" >&2
+echo >&2
+echo "  The docs auto-deploy on push, so publish them together. In $DOCS_DIR:" >&2
+echo "    1. correct any page whose claims this push changes" >&2
+echo "    2. update its <Readiness> blocks and the readiness: frontmatter" >&2
+echo "    3. re-stamp askrelayVersion / askrelayCommit / verifiedOn on every page" >&2
+echo "       (procedure: 'Re-stamping the docs' in that repo's README.md)" >&2
+echo "    4. npm run build   # enforces the stamp and readiness rules" >&2
+echo >&2
+echo "  If this push genuinely changes nothing the site states, either widen the" >&2
+echo "  exemption or bypass once:  git push --no-verify" >&2
+echo >&2
+exit 1

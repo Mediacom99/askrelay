@@ -39,3 +39,9 @@ lint:
 .PHONY: overview
 overview:
 	python3 docs/tools/build-overview.py
+
+## hooks: enable the repo's git hooks (pre-push docs-staleness check)
+.PHONY: hooks
+hooks:
+	git config core.hooksPath .githooks
+	@echo "hooks enabled (core.hooksPath=.githooks) — bypass once with 'git push --no-verify'"

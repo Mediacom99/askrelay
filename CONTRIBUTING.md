@@ -21,6 +21,7 @@ static binary, no cgo); the test target uses cgo because the race detector needs
 it.
 
 ```sh
+make hooks      # once per clone — enable the pre-push docs check (see below)
 make build      # build ./askrelay
 make test       # CGO_ENABLED=1 go test -race ./...
 make lint       # golangci-lint
@@ -28,6 +29,13 @@ make tidy       # go mod tidy
 make overview   # regenerate docs/askrelay-overview.html (see below)
 make help       # list targets
 ```
+
+`make hooks` enables `.githooks/pre-push`, which refuses a push whose documented
+surface has moved ahead of [docs.askrelay.dev](https://docs.askrelay.dev). That
+site auto-deploys on push, so code and docs have to go out together; the hook
+prints exactly what to update. It only fires on files that define something the
+site states, and never on local commits. Bypass a false positive with
+`git push --no-verify`.
 
 CI (`.github/workflows/ci.yml`) runs the static (`CGO_ENABLED=0`) build, a
 cross-compile smoke, `go vet`, the race-enabled tests, and golangci-lint.
