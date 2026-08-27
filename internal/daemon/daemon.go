@@ -20,6 +20,10 @@ type Config struct {
 	// DeviceCredential is the long-lived /ws bearer (T-06) minted at enrollment.
 	// It is a secret at rest: this file is written 0600 and never logged.
 	DeviceCredential string `json:"device_credential"`
+	// RedactHook is an optional executable run after the built-in patterns
+	// (T-12, "bring your own scanner"). Empty = built-ins only. It is
+	// fail-closed: a hook that errors blocks the send.
+	RedactHook string `json:"redact_hook,omitempty"`
 }
 
 // LoadConfig reads and validates the daemon config JSON.

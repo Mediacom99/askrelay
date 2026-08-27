@@ -5,9 +5,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/Mediacom99/askrelay/internal/redact"
 )
+
+// hookTimeout bounds the external redaction hook. Generous for a scanner over
+// one message; a hook slower than this blocks the send (fail-closed, T-12).
+const hookTimeout = 5 * time.Second
+
+// redactFields names the outbound message-body argument of each tool that has
+// one. Nothing else is rewritten: a find_people query is not a message, and
+// silently editing it would be surprising rather than protective.
+var redactFields = map[string]string{
+	"send_message":  "text",
+	"approve_reply": "edited_text",
+}
 
 // bearerTransport attaches the device credential to every relay request (T-20),
 // which is how the daemon authenticates to /mcp without running the AS dance
@@ -65,13 +80,23 @@ func (d *Daemon) ServeStdio(ctx context.Context) error {
 
 // proxy forwards one tool call to the relay verbatim — raw arguments in, the
 // relay's result out untouched, so structuredContent survives (Claude Code reads
-// only that, per the WP-07 learnings). ST-5 hooks redaction here, on the
-// outbound text arguments only.
+// only that, per the WP-07 learnings) — except that an outbound message body is
+// redacted first (ST-5), which is the whole reason this path exists.
 func (d *Daemon) proxy(cs *sdkmcp.ClientSession, name string) sdkmcp.ToolHandler {
 	return func(ctx context.Context, req *sdkmcp.CallToolRequest) (*sdkmcp.CallToolResult, error) {
+		raw := req.Params.Arguments
+		var warning string
+		if field, ok := redactFields[name]; ok {
+			var err error
+			// Fail-closed: on any redaction error nothing is forwarded, so a
+			// broken scanner blocks the send instead of leaking past it (T-12).
+			if raw, warning, err = d.redactField(ctx, raw, field); err != nil {
+				return nil, err
+			}
+		}
 		var args any
-		if len(req.Params.Arguments) > 0 {
-			args = json.RawMessage(req.Params.Arguments)
+		if len(raw) > 0 {
+			args = raw
 		}
 		res, err := cs.CallTool(ctx, &sdkmcp.CallToolParams{Name: name, Arguments: args})
 		if err != nil {
@@ -80,6 +105,59 @@ func (d *Daemon) proxy(cs *sdkmcp.ClientSession, name string) sdkmcp.ToolHandler
 			d.log.Warn("proxy: relay call failed", "tool", name, "err", err)
 			return nil, fmt.Errorf("daemon: relay tool %q: %w", name, err)
 		}
+		if warning != "" {
+			// Kinds and counts only — never the matched text (T-18).
+			d.log.Warn("redacted outbound text before it left this machine", "tool", name, "kinds", warning)
+			res.Content = append([]sdkmcp.Content{&sdkmcp.TextContent{
+				Text: "askrelay redacted secrets before sending (" + warning + "). The queued text shown here is exactly what will be sent.",
+			}}, res.Content...)
+		}
 		return res, nil
 	}
+}
+
+// redactField rewrites one string argument through the built-in patterns and, if
+// configured, the external hook — returning the patched arguments and a warning
+// summarising what was replaced ("" when nothing was).
+//
+// Arguments are re-encoded ONLY when the text actually changed; every other call
+// is forwarded byte-identical, so no unrelated argument can be altered on the
+// way through.
+func (d *Daemon) redactField(ctx context.Context, raw json.RawMessage, field string) (json.RawMessage, string, error) {
+	if len(raw) == 0 {
+		return raw, "", nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, "", fmt.Errorf("daemon: decode tool arguments: %w", err)
+	}
+	text, ok := m[field].(string)
+	if !ok || text == "" {
+		return raw, "", nil // field absent (approve_reply without an edit) or empty
+	}
+
+	res := redact.Redact(text)
+	out := res.Text
+	if d.cfg.RedactHook != "" {
+		hctx, cancel := context.WithTimeout(ctx, hookTimeout)
+		defer cancel()
+		hooked, err := redact.Hook(hctx, d.cfg.RedactHook, out)
+		if err != nil {
+			return nil, "", fmt.Errorf("daemon: redaction hook blocked this send: %w", err)
+		}
+		out = hooked
+	}
+	if out == text {
+		return raw, "", nil
+	}
+	m[field] = out
+	patched, err := json.Marshal(m)
+	if err != nil {
+		return nil, "", fmt.Errorf("daemon: re-encode tool arguments: %w", err)
+	}
+	warning := res.Summary()
+	if warning == "" {
+		warning = "external hook rewrote the text"
+	}
+	return patched, warning, nil
 }
