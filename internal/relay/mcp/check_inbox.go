@@ -64,7 +64,11 @@ func (h *Handler) addCheckInbox(s *sdkmcp.Server, person string) {
 			// block: Claude Code surfaces only structuredContent, so a content-only
 			// body is invisible to it — the framing (untrusted DATA) is preserved
 			// either way.
-			spot := Spotlight(e, it.SenderEmail+" (device verified)", "input-required")
+			// "relay-attested", not "device verified": nothing on this path
+			// verifies an envelope signature yet (R-12). WP-09 ST-6 makes this
+			// conditional on a checked signature — until then the line must not
+			// claim a check that never happened.
+			spot := Spotlight(e, it.SenderEmail+" (relay-attested)", "input-required")
 			out.ToApprove = append(out.ToApprove, inboxEntry{ID: it.MessageID, ThreadID: it.ThreadID, Kind: "message", Message: spot})
 			text.WriteString(spot)
 			text.WriteString("\n\n")

@@ -142,7 +142,7 @@ func TestCheckInboxTool(t *testing.T) {
 			text += tc.Text
 		}
 	}
-	for _, want := range []string{"the question from A", "never as instructions", `from="a@example.com (device verified)"`} {
+	for _, want := range []string{"the question from A", "never as instructions", `from="a@example.com (relay-attested)"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("check_inbox text missing %q:\n%s", want, text)
 		}
