@@ -78,8 +78,36 @@ func (s *Store) CreateDraft(threadID, authorID string, e envelope.Envelope, now 
 // is absent) is ErrNotFound (no oracle). No state parameter (F3). Returns the
 // recipient person id (for the delivery push) and the minted *gate.Release.
 func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now time.Time) (recipientID string, rel *gate.Release, err error) {
+	rid, r, _, err := s.releaseDraft(personID, draftID, editedText, now, nil)
+	return rid, r, err
+}
+
+// attestation is a device signature offered for a release: the signing device
+// and its signature over the envelope this release will produce (T-19/T-21).
+type attestation struct {
+	device string
+	sig    []byte
+}
+
+// ReleaseDraftSigned is ReleaseDraft carrying a device attestation. The
+// signature is verified IN the release transaction against the signing device's
+// stored public key — the relay never stores a signature it has not checked, and
+// because verification is over the canonically re-derived envelope, that one
+// check also proves the signed bytes match this release exactly (no field-by-
+// field comparison needed).
+//
+// signed reports the outcome: false means the signature did not verify against
+// the envelope this transaction produced (a drift bug, or a device offering a
+// signature for something else) and the message was delivered relay-attested
+// instead. Degrading rather than failing keeps a signing fault from blocking
+// mail; the caller logs it.
+func (s *Store) ReleaseDraftSigned(personID, draftID string, editedText *string, now time.Time, device string, sig []byte) (recipientID string, rel *gate.Release, signed bool, err error) {
+	return s.releaseDraft(personID, draftID, editedText, now, &attestation{device: device, sig: sig})
+}
+
+func (s *Store) releaseDraft(personID, draftID string, editedText *string, now time.Time, att *attestation) (recipientID string, rel *gate.Release, signed bool, err error) {
 	err = s.writeTx(func(tx *sql.Tx) error {
-		thread, author, cur, payload, err := loadDraft(tx, draftID)
+		thread, author, cur, payload, err := draftPayload(tx, draftID, editedText)
 		if err != nil {
 			return err
 		}
@@ -87,18 +115,21 @@ func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now t
 			return ErrNotFound
 		}
 		if editedText != nil {
-			payload.Body = envelope.Message{Role: payload.Body.Role, Parts: []envelope.Part{{Type: "text", Text: *editedText}}}
-			// T-16 caps on the edited payload (the draft pipeline never signs, so
-			// it doesn't inherit Sign/Verify's cap check — enforce it here).
-			if verr := envelope.Validate(payload); verr != nil {
-				return fmt.Errorf("store: release draft: %w", verr)
-			}
 			blob, merr := json.Marshal(payload)
 			if merr != nil {
 				return fmt.Errorf("store: marshal edited draft: %w", merr)
 			}
 			if _, uerr := tx.Exec(`UPDATE drafts SET envelope=? WHERE id=?`, blob, draftID); uerr != nil {
 				return fmt.Errorf("store: apply edit: %w", uerr)
+			}
+		}
+		if att != nil {
+			candidate := payload
+			candidate.From.Device = att.device
+			candidate.SentAt = now // deliverInTx stamps this; verify the same bytes
+			candidate.Sig = att.sig
+			if verifyRelease(tx, candidate, att.device) == nil {
+				payload, signed = candidate, true
 			}
 		}
 		appr := gate.Approvable{
@@ -120,9 +151,68 @@ func (s *Store) ReleaseDraft(personID, draftID string, editedText *string, now t
 		return nil
 	})
 	if err != nil {
-		return "", nil, err // T-17: zero value + error, never both
+		return "", nil, false, err // T-17: zero value + error, never both
 	}
-	return recipientID, rel, nil
+	return recipientID, rel, signed, nil
+}
+
+// draftPayload computes exactly what a release will send: the stored draft with
+// editedText applied (a fresh envelope, never mutating the stored one) and the
+// T-16 caps re-checked, since the draft pipeline does not inherit Sign/Verify's
+// cap check. Pure read — the caller persists an edit if it wants to. Shared by
+// DraftForSigning and the release itself, so the bytes offered for signature and
+// the bytes delivered come from one computation.
+func draftPayload(tx *sql.Tx, draftID string, editedText *string) (thread, author string, cur gate.DraftState, payload envelope.Envelope, err error) {
+	thread, author, cur, payload, err = loadDraft(tx, draftID)
+	if err != nil {
+		return "", "", "", envelope.Envelope{}, err
+	}
+	if editedText != nil {
+		payload.Body = envelope.Message{Role: payload.Body.Role, Parts: []envelope.Part{{Type: "text", Text: *editedText}}}
+		if verr := envelope.Validate(payload); verr != nil {
+			return "", "", "", envelope.Envelope{}, fmt.Errorf("store: release draft: %w", verr)
+		}
+	}
+	return thread, author, cur, payload, nil
+}
+
+// DraftForSigning returns the envelope a release would produce, stamped with the
+// release time and with From.Device left empty for the caller to fill per
+// candidate device (T-21). Read-only: nothing is released, and an absent or
+// someone else's draft is ErrNotFound (no oracle).
+func (s *Store) DraftForSigning(personID, draftID string, editedText *string, now time.Time) (envelope.Envelope, error) {
+	var out envelope.Envelope
+	err := s.writeTx(func(tx *sql.Tx) error {
+		_, author, _, payload, err := draftPayload(tx, draftID, editedText)
+		if err != nil {
+			return err
+		}
+		if author != personID {
+			return ErrNotFound
+		}
+		payload.SentAt = now // deliverInTx stamps the same value
+		out = payload
+		return nil
+	})
+	if err != nil {
+		return envelope.Envelope{}, err
+	}
+	return out, nil
+}
+
+// verifyRelease checks a candidate signed envelope against the signing device's
+// stored public key, read in the caller's transaction so a device revoked in the
+// same instant cannot slip a signature through.
+func verifyRelease(tx *sql.Tx, candidate envelope.Envelope, device string) error {
+	var pub []byte
+	err := tx.QueryRow(`SELECT pubkey FROM devices WHERE id = ? AND revoked_at IS NULL`, device).Scan(&pub)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("store: signing device lookup: %w", err)
+	}
+	return envelope.Verify(candidate, pub)
 }
 
 // deliverInTx ingests a released draft's (unsigned) envelope as the recipient's

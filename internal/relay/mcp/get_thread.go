@@ -60,7 +60,7 @@ func (h *Handler) addGetThread(s *sdkmcp.Server, person string) {
 			// view.State is the authoritative thread state (never e.State). The
 			// spotlight goes in BOTH the structured Body field and the content block
 			// (Claude Code surfaces only structuredContent); framing is preserved.
-			spot := Spotlight(e, m.SenderEmail+" (relay-attested)", view.State)
+			spot := Spotlight(e, h.provenance(e, m.SenderEmail), view.State)
 			out.Messages = append(out.Messages, threadMsg{ID: m.MessageID, From: m.SenderEmail, Body: spot})
 			text.WriteString(spot)
 			text.WriteString("\n\n")

@@ -112,6 +112,9 @@ func (d *Daemon) proxy(cs *sdkmcp.ClientSession, name string) sdkmcp.ToolHandler
 				Text: "askrelay redacted secrets before sending (" + warning + "). The queued text shown here is exactly what will be sent.",
 			}}, res.Content...)
 		}
+		// Record what we forwarded so a later sign request for it is recognisable
+		// (T-21). The POST-redaction text is what the relay will ask us to sign.
+		d.noteForwarded(name, raw, res)
 		return res, nil
 	}
 }
@@ -160,4 +163,40 @@ func (d *Daemon) redactField(ctx context.Context, raw json.RawMessage, field str
 		warning = "external hook rewrote the text"
 	}
 	return patched, warning, nil
+}
+
+// noteForwarded records the body this machine just forwarded, keyed by the draft
+// it became, so the sign handler can recognise it later (T-21).
+//
+// send_message mints the draft, so its id has to be read back out of the relay's
+// structured result; approve_reply's edit names the draft in its own arguments.
+func (d *Daemon) noteForwarded(tool string, raw json.RawMessage, res *sdkmcp.CallToolResult) {
+	var args struct {
+		ID         string  `json:"id"`
+		Text       string  `json:"text"`
+		EditedText *string `json:"edited_text"`
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return
+	}
+	switch tool {
+	case "send_message":
+		blob, err := json.Marshal(res.StructuredContent)
+		if err != nil {
+			return
+		}
+		var out struct {
+			DraftID string `json:"draft_id"`
+		}
+		if err := json.Unmarshal(blob, &out); err != nil || out.DraftID == "" {
+			return
+		}
+		d.recordSignable(out.DraftID, args.Text)
+	case "approve_reply":
+		if args.EditedText != nil && args.ID != "" {
+			// The human edited at review time; the edited body is what will be
+			// signed, so it replaces the record made at send time.
+			d.recordSignable(args.ID, *args.EditedText)
+		}
+	}
 }

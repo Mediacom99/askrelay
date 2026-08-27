@@ -9,6 +9,7 @@ import (
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/Mediacom99/askrelay/internal/envelope"
 	"github.com/Mediacom99/askrelay/internal/relay/oauth"
 	"github.com/Mediacom99/askrelay/internal/relay/store"
 )
@@ -22,6 +23,7 @@ type Handler struct {
 	log      *slog.Logger
 	version  string
 	notifier Notifier
+	signer   Signer
 
 	mu      sync.Mutex     // guards waiting
 	waiting map[string]int // concurrent wait_for_activity calls per person
@@ -35,11 +37,21 @@ type Notifier interface {
 	Notify(personID string)
 }
 
+// Signer asks the author's connected device to sign a release before it is
+// stored and delivered (T-19/T-21) — satisfied by the relay's WebSocket hub, and
+// an interface for the same reason Notifier is. ok=false means nobody signed, and
+// the release proceeds relay-attested. A nil Signer disables signing entirely
+// (WP-07 tests, and any relay whose users run no daemon).
+type Signer interface {
+	SignRelease(ctx context.Context, person string, e envelope.Envelope) (device string, sig []byte, ok bool)
+}
+
 // NewHandler builds the MCP surface. version labels the server in the MCP
 // Implementation (passed in rather than imported to avoid a cycle with the
-// relay package that mounts this). notifier may be nil (no push).
-func NewHandler(st *store.Store, log *slog.Logger, version string, notifier Notifier) *Handler {
-	return &Handler{store: st, log: log, version: version, notifier: notifier, waiting: map[string]int{}}
+// relay package that mounts this). notifier and signer may be nil (no push, no
+// device signatures).
+func NewHandler(st *store.Store, log *slog.Logger, version string, notifier Notifier, signer Signer) *Handler {
+	return &Handler{store: st, log: log, version: version, notifier: notifier, signer: signer, waiting: map[string]int{}}
 }
 
 // notify signals the notifier if one is configured.
@@ -152,4 +164,31 @@ func (h *Handler) waitRelease(person string) {
 	if h.waiting[person] == 0 {
 		delete(h.waiting, person)
 	}
+}
+
+// provenance is the recipient-facing truth about a message's origin (T-21): a
+// device signature this relay verified, or the relay's own attestation and
+// nothing more. It must never claim a check that did not happen — that line is
+// the only thing telling a recipient how much the origin is worth.
+//
+// v1 verifies HERE, on the relay. The docs must say exactly that: a recipient
+// who trusts this verdict is trusting the relay. Recipient-side verification
+// needs sender device-key distribution and pinning, deferred by T-21.
+//
+// A signature from a since-revoked device reads as relay-attested: the key
+// lookup is deliberately the active-devices one, so a revoked device stops
+// vouching for anything the moment it is revoked.
+func (h *Handler) provenance(e envelope.Envelope, senderEmail string) string {
+	if len(e.Sig) > 0 && e.From.Device != "" {
+		dev, err := h.store.ActiveDeviceByID(e.From.Device)
+		if err == nil {
+			if envelope.Verify(e, dev.PubKey) == nil {
+				return senderEmail + " (device verified)"
+			}
+			// A stored signature that does not verify is a security event, not a
+			// display detail: log it, then tell the recipient the truth.
+			h.log.Warn("provenance: stored signature did not verify", "message_id", e.ID, "device_id", e.From.Device)
+		}
+	}
+	return senderEmail + " (relay-attested)"
 }

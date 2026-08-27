@@ -1,12 +1,15 @@
 package store
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/Mediacom99/askrelay/internal/envelope"
 	"github.com/Mediacom99/askrelay/internal/gate"
 )
 
@@ -199,5 +202,78 @@ func TestCreateDraftBadID(t *testing.T) {
 	e.ID = "not-a-uuid"
 	if _, err := s.CreateDraft(thread, author, e, now); err == nil {
 		t.Error("CreateDraft accepted a non-UUID envelope id")
+	}
+}
+
+// enrollWithKey enrolls a person and keeps the device private key, so a test can
+// produce a real signature for that device.
+func enrollWithKey(t *testing.T, s *Store, email string, now time.Time) (personID, deviceID string, priv ed25519.PrivateKey) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	token, err := s.CreateInvite(email, time.Hour, now)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+	p, d, err := s.Enroll(token, pub, "laptop", now)
+	if err != nil {
+		t.Fatalf("Enroll: %v", err)
+	}
+	return p.ID, d.ID, priv
+}
+
+// ReleaseDraftSigned stores a signature only after verifying it against the
+// signing device's key, and degrades to relay-attested rather than failing when
+// it does not verify (T-19/T-21).
+func TestReleaseDraftSignedVerifiesBeforeStoring(t *testing.T) {
+	s := newStore(t)
+	now := time.Unix(1_700_000_000, 0).UTC()
+
+	asker, _ := enrollPerson(t, s, uuid.Must(uuid.NewV7()).String()+"@a.example", now)
+	author, device, priv := enrollWithKey(t, s, uuid.Must(uuid.NewV7()).String()+"@b.example", now)
+
+	newDraft := func(text string) string {
+		t.Helper()
+		thread := uuid.Must(uuid.NewV7()).String()
+		if err := s.IngestMessage(mkEnvelope(thread, asker, author, now), asker, testFresh, now); err != nil {
+			t.Fatalf("seed thread: %v", err)
+		}
+		reply := mkEnvelope(thread, author, asker, now)
+		reply.Body = envelope.Message{Role: "agent", Parts: []envelope.Part{{Type: "text", Text: text}}}
+		id, err := s.CreateDraft(thread, author, reply, now)
+		if err != nil {
+			t.Fatalf("CreateDraft: %v", err)
+		}
+		return id
+	}
+
+	// A signature over exactly what the release will send.
+	draft := newDraft("signed body")
+	e, err := s.DraftForSigning(author, draft, nil, now)
+	if err != nil {
+		t.Fatalf("DraftForSigning: %v", err)
+	}
+	e.From.Device = device
+	if err := envelope.Sign(&e, priv); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if _, _, signed, err := s.ReleaseDraftSigned(author, draft, nil, now, device, e.Sig); err != nil {
+		t.Fatalf("ReleaseDraftSigned: %v", err)
+	} else if !signed {
+		t.Error("a valid signature over the released bytes was not accepted")
+	}
+
+	// The same signature offered for a different body must be rejected — and the
+	// message still delivered, relay-attested.
+	other := newDraft("other body")
+	if _, _, signed, err := s.ReleaseDraftSigned(author, other, nil, now, device, e.Sig); err != nil {
+		t.Fatalf("ReleaseDraftSigned (mismatched): %v", err)
+	} else if signed {
+		t.Error("a signature over different bytes was accepted")
+	}
+	if st := draftState(t, s, other); st != "sent" {
+		t.Errorf("mismatched-signature draft state = %q, want sent (delivered relay-attested)", st)
 	}
 }

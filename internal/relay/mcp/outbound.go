@@ -112,6 +112,10 @@ type discardReplyInput struct {
 type replyOutput struct {
 	ID    string `json:"id"`
 	State string `json:"state"`
+	// Attestation is what the recipient will be shown about this message's
+	// origin: "device-signed" when the author's daemon signed the exact released
+	// bytes, "relay-attested" otherwise (T-21). The sender is told which they got.
+	Attestation string `json:"attestation,omitempty"`
 }
 
 // addOutboundVerdicts registers approve_reply and discard_reply, bound to
@@ -120,17 +124,36 @@ func (h *Handler) addOutboundVerdicts(s *sdkmcp.Server, person string) {
 	sdkmcp.AddTool(s, &sdkmcp.Tool{
 		Name:        "approve_reply",
 		Description: "Release (SEND) one of your drafts to its recipient — irreversible. Only call AFTER your human has explicitly approved this specific draft; otherwise show them the draft and wait. Optionally edit the text first.",
-	}, func(_ context.Context, _ *sdkmcp.CallToolRequest, in approveReplyInput) (*sdkmcp.CallToolResult, replyOutput, error) {
+	}, func(ctx context.Context, _ *sdkmcp.CallToolRequest, in approveReplyInput) (*sdkmcp.CallToolResult, replyOutput, error) {
 		if in.EditedText != nil && len(*in.EditedText) > envelope.MaxBodyBytes {
 			return nil, replyOutput{}, errTooLong
 		}
 		now := time.Now().UTC()
-		recipientID, _, err := h.store.ReleaseDraft(person, in.ID, in.EditedText, now)
+		// T-19/T-21: offer the release to the author's daemon for a device
+		// signature first. The same `now` is used for both calls, so the bytes
+		// signed are the bytes delivered.
+		device, sig := h.signatureFor(ctx, person, in.ID, in.EditedText, now)
+		var (
+			recipientID string
+			signed      bool
+			err         error
+		)
+		if sig != nil {
+			recipientID, _, signed, err = h.store.ReleaseDraftSigned(person, in.ID, in.EditedText, now, device, sig)
+			if err == nil && !signed {
+				// SignRelease already verified this signature, so a mismatch here
+				// means the release re-derived different bytes: a bug, not a
+				// hostile daemon. Delivery went ahead relay-attested.
+				h.log.Error("approve_reply: signature dropped at release", "message_id", in.ID)
+			}
+		} else {
+			recipientID, _, err = h.store.ReleaseDraft(person, in.ID, in.EditedText, now)
+		}
 		if e := mapReplyErr(h, "approve_reply", err); e != nil {
 			return nil, replyOutput{}, e
 		}
 		h.notify(recipientID) // release delivered it atomically
-		return emptyResult(), replyOutput{ID: in.ID, State: "sent"}, nil
+		return emptyResult(), replyOutput{ID: in.ID, State: "sent", Attestation: attestationOf(signed)}, nil
 	})
 
 	sdkmcp.AddTool(s, &sdkmcp.Tool{
@@ -158,4 +181,32 @@ func mapReplyErr(h *Handler, tool string, err error) error {
 		h.log.Error(tool, "err", err)
 		return errInternal
 	}
+}
+
+// signatureFor asks the author's daemon to sign the release-to-be. Every failure
+// path returns no signature: no signer wired, an unreadable draft (the release
+// below reports the real error), no daemon connected, a refusal, or a signature
+// that did not verify. T-21: signing degrades the attestation, it never blocks
+// the send.
+func (h *Handler) signatureFor(ctx context.Context, person, draftID string, edited *string, now time.Time) (string, []byte) {
+	if h.signer == nil {
+		return "", nil
+	}
+	e, err := h.store.DraftForSigning(person, draftID, edited, now)
+	if err != nil {
+		return "", nil
+	}
+	device, sig, ok := h.signer.SignRelease(ctx, person, e)
+	if !ok {
+		return "", nil
+	}
+	return device, sig
+}
+
+// attestationOf names what the recipient will be told about a message's origin.
+func attestationOf(signed bool) string {
+	if signed {
+		return "device-signed"
+	}
+	return "relay-attested"
 }

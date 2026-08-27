@@ -311,6 +311,44 @@ reference and bind every WP.
   flow against itself (a machine doing a browser dance, plus a refresh loop);
   duplicating the tool surface as `/ws` frames (a second protocol for the same
   operations). *APPROVED (maintainer, 2026-08-22).*
+- **T-21 — sign-at-release protocol details.** The maintainer delegated these
+  five to sensible defaults (2026-08-27); recorded so the choices are auditable
+  rather than buried in code.
+  1. *Who decides what is signable?* **The daemon**, not a stored flag. It
+     remembers the bodies it forwarded and refuses to sign anything else, so no
+     `drafts.author_device_id` column and no device id threaded through tokens
+     are needed — and the right outcome falls out of the mechanism: a direct-HTTP
+     draft is refused by the daemon because it never forwarded it. Consequence:
+     **no liveness coupling** — a missing daemon degrades to relay-attested
+     rather than blocking the send, retiring the cost T-19 accepted.
+  2. *Wait budget at release:* **3 s**, then relay-attested. It is a local
+     process on the same machine and `approve_reply` is already interactive.
+  3. *Does the envelope name the signing device?* **Yes.** The relay builds one
+     canonical envelope per candidate device (`From.Device` set) and the daemon
+     refuses one that does not name it. Without this, "which key signed this" is
+     only inferable. Usually one device, so usually one envelope.
+  4. *Is the sender told which attestation they got?* **Yes** — `attestation:
+     "device-signed" | "relay-attested"` on `approve_reply`'s structured output.
+     The sender should know what the recipient will be shown.
+  5. *Who verifies?* **The relay**, in v1 — and the docs must say exactly that,
+     never "your machine verified it". True end-to-end verification means the
+     *recipient's* daemon checking, which needs sender device-pubkey distribution
+     and pinning: key distribution, i.e. the federation-adjacent territory the
+     scope guardrails warn against. Deferred as its own decision.
+
+  **Cross-process consequence (discovered while designing, same day):** the two
+  local roles are two processes — `askrelay mcp` forwards the drafts, but only
+  `askrelay daemon` holds the `/ws` connection that a sign request arrives on. So
+  the "did I forward this?" record cannot live in memory. It is a small on-disk
+  ledger under the config dir: one 0600 file per pending draft holding a **body
+  hash only** (never content), written by the `mcp` process before it forwards,
+  read and deleted by the `daemon` process when it signs, swept on startup.
+  Boring, cross-process, and it survives a daemon restart — which an in-memory
+  map would not. Rejected: a second WS connection from the `mcp` process (the
+  hub keys one connection per device, so it would displace the notifier); a local
+  IPC socket (more machinery for the same effect); merging the two roles (would
+  tie notifications to having a client session open, which is exactly when you
+  do not need them). *APPROVED by delegation (maintainer, 2026-08-27).*
 
 ## 6. Work packages
 
@@ -656,7 +694,7 @@ Nothing to change; worth stating because D-23 makes self-talk the first-user pat
 ### WP-09 — daemon core
 
 **Status:** IN PROGRESS (ST-1 done) · **Depends on:** WP-01 WP-07 WP-08 WP-11 ·
-**Gated by:** T-11 T-19 T-20 · **Spec:** arch §6, §7; D-25.
+**Gated by:** T-11 T-19 T-20 T-21 · **Spec:** arch §6, §7; D-25.
 
 **Goal:** `askrelay daemon`: config+key loading (0600, written by `enroll`); WS
 client with jittered reconnect; OS notification emit (macOS/Linux); offline
@@ -672,7 +710,7 @@ server exposing the same §5.1 toolset for Codex/local clients.
 | ST-3 | OS notification on mail (macOS `osascript` / Linux `notify-send`), degrading to a log line |
 | ST-4 | stdio MCP server (the WP-07 tool table, locally) over a device-credential-authenticated relay path (T-20) — **moved ahead of the queue and of signing: it is the only path on which redaction and signatures mean anything** (T-19 amendment) |
 | ST-5 | redact→sign ordering on that path, with the tamper test that proves the order |
-| ST-6 | sign-at-release (T-19) + the relay-side signing-request queue — **security pass earned on its own** |
+| ST-6 | sign-at-release (T-19, protocol per T-21) + the relay-side signing-request path — **security pass earned on its own** |
 | ST-7 | offline outbound queue (last: it holds *signed* outbound, so building it earlier means building it twice) |
 | ST-8 | three-agent quality pass |
 

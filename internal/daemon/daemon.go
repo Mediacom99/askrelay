@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"time"
 )
 
 // Config is the daemon/user config written by `enroll` (arch §7): JSON at
@@ -72,7 +74,10 @@ type Daemon struct {
 	log *slog.Logger
 	// version is stamped on the MCP Implementation this daemon advertises.
 	version string
-	seen    map[string]bool // message ids notified this run; touched only by session's goroutine
+	// dir is the config directory: home of the device key and the pending-draft
+	// ledger the two local roles share (T-21).
+	dir  string
+	seen map[string]bool // message ids notified this run; touched only by session's goroutine
 	// notify raises the OS notification. A field, not a direct call, so tests
 	// can observe notifications without firing real desktop popups.
 	notify func()
@@ -90,7 +95,8 @@ func Load(configPath, version string, log *slog.Logger) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Daemon{cfg: cfg, key: key, log: log, version: version, seen: map[string]bool{}}
+	d := &Daemon{cfg: cfg, key: key, log: log, version: version,
+		dir: filepath.Dir(configPath), seen: map[string]bool{}}
 	d.notify = d.osNotify
 	return d, nil
 }
@@ -98,6 +104,7 @@ func Load(configPath, version string, log *slog.Logger) (*Daemon, error) {
 // Run drives the daemon until ctx is cancelled (SIGINT/SIGTERM from the caller).
 func (d *Daemon) Run(ctx context.Context) error {
 	d.log.Info("daemon started", "relay", d.cfg.RelayURL, "person", d.cfg.PersonID, "device", d.cfg.DeviceID)
+	d.sweepSignable(time.Now())
 	d.listen(ctx) // returns on ctx cancellation, or on an unrecoverable auth failure
 	d.log.Info("daemon shutting down")
 	return nil

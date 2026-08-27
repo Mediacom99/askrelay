@@ -36,6 +36,12 @@ type wsFrame struct {
 	ThreadID string          `json:"thread_id,omitempty"`
 	SenderID string          `json:"sender_id,omitempty"`
 	Envelope json.RawMessage `json:"envelope,omitempty"`
+	// Sig carries a device signature on a "signature" reply (T-19/T-21).
+	Sig []byte `json:"sig,omitempty"`
+	// Device is stamped by the read loop from the authenticated connection, NOT
+	// read off the wire (json:"-"), so a daemon cannot claim to be another
+	// device when answering a sign_request.
+	Device string `json:"-"`
 }
 
 // wsConn is one live socket plus its coalescing wake channel. All writes flow
@@ -43,6 +49,10 @@ type wsFrame struct {
 type wsConn struct {
 	conn *websocket.Conn
 	wake chan struct{} // cap 1; a non-blocking send coalesces overlapping pushes
+	// out carries server-initiated frames (sign requests) to the single writer.
+	// Small and non-blocking at the send site: a wedged socket must never stall a
+	// release.
+	out chan wsFrame
 }
 
 func (c *wsConn) writeFrame(ctx context.Context, f wsFrame) error {
@@ -172,7 +182,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.SetReadLimit(maxWSFrame)
-	wc := &wsConn{conn: c, wake: make(chan struct{}, 1)}
+	wc := &wsConn{conn: c, wake: make(chan struct{}, 1), out: make(chan wsFrame, 4)}
 	s.hub.add(person, device, wc)
 	s.log.Info("ws: connected", "person_id", person, "device_id", device)
 
@@ -210,6 +220,11 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 					s.log.Warn("ws: ack", "err", err, "message_id", f.ID)
 				}
 			}
+		case "signature", "sign_refused":
+			if f.ID != "" {
+				f.Device = device // authenticated connection, not a wire claim
+				s.signWait.deliver(f.ID, f)
+			}
 		default:
 			s.log.Warn("ws: unknown frame type", "type", f.Type)
 		}
@@ -226,6 +241,15 @@ func (s *Server) writerLoop(ctx context.Context, device string, c *wsConn) {
 			return
 		case <-c.wake:
 			s.drainInbox(ctx, device, c)
+		case f := <-c.out:
+			wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+			err := c.writeFrame(wctx, f)
+			cancel()
+			if err != nil {
+				s.log.Warn("ws: write failed, closing", "device_id", device, "type", f.Type)
+				_ = c.conn.CloseNow() // read loop exits and deregisters
+				return
+			}
 		}
 	}
 }

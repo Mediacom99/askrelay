@@ -29,6 +29,8 @@ type Server struct {
 	log    *slog.Logger
 	mux    *http.ServeMux
 	hub    *hub
+	// signWait correlates outstanding sign_requests with their replies (T-21).
+	signWait *signWaiters
 	// bearer guards protected routes with access-token validation (WP-05); the
 	// /mcp route is wrapped with it in NewServer.
 	bearer func(http.Handler) http.Handler
@@ -42,7 +44,8 @@ type Server struct {
 // NewServer wires the routes; it does not listen. store, issuer, and log must
 // be non-nil.
 func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger) *Server {
-	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux(), hub: newHub()}
+	s := &Server{cfg: cfg, store: st, issuer: iss, log: log, mux: http.NewServeMux(),
+		hub: newHub(), signWait: newSignWaiters()}
 	// T-20: /mcp also accepts a daemon's device credential. The store checks
 	// mirror /ws exactly — active device, and the credential's person owns it.
 	s.bearer = oauth.NewBearerMiddleware(iss, cfg.BaseURL, log, func(person, device string) error {
@@ -66,7 +69,7 @@ func NewServer(cfg Config, st *store.Store, iss *oauth.Issuer, log *slog.Logger)
 	s.mux.HandleFunc("POST "+oauth.AuthorizePath, s.handleAuthorizeSubmit)
 	s.mux.HandleFunc("POST "+oauth.TokenPath, s.handleToken)
 	s.mux.HandleFunc("POST "+oauth.RegisterPath, s.handleRegister)
-	s.mux.Handle("POST /mcp", s.bearer(maxBytes(mcp.NewHandler(st, log, Version, s).HTTPHandler(), maxMCPBody)))
+	s.mux.Handle("POST /mcp", s.bearer(maxBytes(mcp.NewHandler(st, log, Version, s, s).HTTPHandler(), maxMCPBody)))
 	s.mux.HandleFunc("GET /ws", s.handleWS)
 	return s
 }

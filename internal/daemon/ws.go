@@ -9,9 +9,12 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
+
+	"github.com/Mediacom99/askrelay/internal/envelope"
 )
 
 const (
@@ -21,6 +24,9 @@ const (
 	// back in lockstep.
 	backoffMin = time.Second
 	backoffMax = 30 * time.Second
+	// writeTimeout bounds one reply write, so a stalled socket fails instead of
+	// blocking the read loop forever.
+	writeTimeout = 10 * time.Second
 )
 
 // ErrUnauthorized means the relay refused our device credential: revoked
@@ -32,10 +38,12 @@ var ErrUnauthorized = errors.New("daemon: relay rejected the device credential �
 // is a wire contract between two processes, and sharing the struct would drag
 // the relay's unexported internals into the daemon's surface.
 type frame struct {
-	Type     string `json:"type"`
-	ID       string `json:"id,omitempty"`
-	ThreadID string `json:"thread_id,omitempty"`
-	SenderID string `json:"sender_id,omitempty"`
+	Type     string          `json:"type"`
+	ID       string          `json:"id,omitempty"`
+	ThreadID string          `json:"thread_id,omitempty"`
+	SenderID string          `json:"sender_id,omitempty"`
+	Envelope json.RawMessage `json:"envelope,omitempty"`
+	Sig      []byte          `json:"sig,omitempty"`
 }
 
 // listen holds a session to the relay open until ctx is cancelled, reconnecting
@@ -95,16 +103,23 @@ func (d *Daemon) session(ctx context.Context) error {
 			d.log.Warn("ws: unparseable frame") // never log the frame itself (T-18)
 			continue
 		}
-		if f.Type != "message" || f.ID == "" {
+		switch {
+		case f.Type == "sign_request" && f.ID != "":
+			// Same goroutine writes the reply: the read loop is this session's
+			// only writer, so no write mutex is needed.
+			if err := d.answerSignRequest(ctx, c, f); err != nil {
+				return fmt.Errorf("daemon: answer sign request: %w", err)
+			}
+		case f.Type == "message" && f.ID != "":
+			if d.seen[f.ID] {
+				continue // re-pushed on reconnect precisely because we never ack
+			}
+			d.seen[f.ID] = true
+			d.log.Info("mail", "message_id", f.ID, "thread", f.ThreadID)
+			d.notify()
+		default:
 			d.log.Warn("ws: unexpected frame", "type", f.Type)
-			continue
 		}
-		if d.seen[f.ID] {
-			continue // re-pushed on reconnect precisely because we never ack
-		}
-		d.seen[f.ID] = true
-		d.log.Info("mail", "message_id", f.ID, "thread", f.ThreadID)
-		d.notify()
 	}
 }
 
@@ -127,4 +142,66 @@ func (d *Daemon) osNotify() {
 	if err := cmd.Run(); err != nil {
 		d.log.Warn("notify failed", "err", err)
 	}
+}
+
+// answerSignRequest signs a release the relay is holding — but ONLY if this
+// machine forwarded that exact body (T-21). A refusal is the correct answer for
+// anything else, including a draft created straight against the relay, and it is
+// logged at Warn because a relay asking us to sign text we never wrote is a
+// security event rather than a nuisance.
+//
+// Three things must hold: the envelope is from our person, it names OUR device
+// (so the signature is bound to the key making it), and its body matches what we
+// forwarded. The relay verifies the result independently, so a bug here degrades
+// the message to relay-attested rather than forging anything.
+func (d *Daemon) answerSignRequest(ctx context.Context, c *websocket.Conn, f frame) error {
+	refuse := func(reason string) error {
+		d.log.Warn("ws: refusing to sign", "reason", reason, "message_id", f.ID)
+		return d.writeFrame(ctx, c, frame{Type: "sign_refused", ID: f.ID})
+	}
+	var e envelope.Envelope
+	if err := json.Unmarshal(f.Envelope, &e); err != nil {
+		return refuse("unparseable envelope")
+	}
+	switch {
+	case e.ID != f.ID:
+		return refuse("envelope id does not match the request")
+	case e.From.Person != d.cfg.PersonID:
+		return refuse("not our person")
+	case e.From.Device != d.cfg.DeviceID:
+		return refuse("names another device")
+	case !d.forwarded(e.ID, bodyText(e)):
+		return refuse("this machine never forwarded that body")
+	}
+	if err := envelope.Sign(&e, d.key); err != nil {
+		return refuse("signing failed: " + err.Error())
+	}
+	d.log.Info("signed a release", "message_id", e.ID, "thread", e.Thread)
+	if err := d.writeFrame(ctx, c, frame{Type: "signature", ID: e.ID, Sig: e.Sig}); err != nil {
+		return err
+	}
+	d.forgetSignable(e.ID)
+	return nil
+}
+
+// bodyText concatenates the envelope's text parts — what the ledger hashes, so
+// the record survives changes to the surrounding envelope structure.
+func bodyText(e envelope.Envelope) string {
+	var b strings.Builder
+	for _, p := range e.Body.Parts {
+		if p.Type == "text" {
+			b.WriteString(p.Text)
+		}
+	}
+	return b.String()
+}
+
+func (d *Daemon) writeFrame(ctx context.Context, c *websocket.Conn, f frame) error {
+	blob, err := json.Marshal(f)
+	if err != nil {
+		return fmt.Errorf("daemon: marshal frame: %w", err)
+	}
+	wctx, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	return c.Write(wctx, websocket.MessageText, blob)
 }
