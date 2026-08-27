@@ -63,18 +63,21 @@ func loadKey(path string) (ed25519.PrivateKey, error) {
 // relay push. Nothing core requires it (D-06). ST-1 is the skeleton; the WS
 // client (ST-2), outbound signing (ST-3), and stdio server (ST-4) mount here.
 type Daemon struct {
-	cfg  Config
-	key  ed25519.PrivateKey
-	log  *slog.Logger
-	seen map[string]bool // message ids notified this run; touched only by session's goroutine
+	cfg Config
+	key ed25519.PrivateKey
+	log *slog.Logger
+	// version is stamped on the MCP Implementation this daemon advertises.
+	version string
+	seen    map[string]bool // message ids notified this run; touched only by session's goroutine
 	// notify raises the OS notification. A field, not a direct call, so tests
 	// can observe notifications without firing real desktop popups.
 	notify func()
 }
 
 // Load reads the config + device key at configPath and builds a Daemon, failing
-// fast if enrollment is incomplete.
-func Load(configPath string, log *slog.Logger) (*Daemon, error) {
+// fast if enrollment is incomplete. It serves both local roles: Run is the
+// background notifier, ServeStdio is the MCP server an AI client spawns.
+func Load(configPath, version string, log *slog.Logger) (*Daemon, error) {
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return nil, err
@@ -83,7 +86,7 @@ func Load(configPath string, log *slog.Logger) (*Daemon, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Daemon{cfg: cfg, key: key, log: log, seen: map[string]bool{}}
+	d := &Daemon{cfg: cfg, key: key, log: log, version: version, seen: map[string]bool{}}
 	d.notify = d.osNotify
 	return d, nil
 }

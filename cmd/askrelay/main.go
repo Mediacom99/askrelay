@@ -48,6 +48,8 @@ func main() {
 		err = cmdDevice(args)
 	case "daemon":
 		err = cmdDaemon(args)
+	case "mcp":
+		err = cmdMCP(args)
 	case "version":
 		fmt.Println(relay.Version)
 	case "help", "-h", "--help":
@@ -73,7 +75,8 @@ commands:
   invite <email>    mint a single-use enrollment invite, print the invite URL
   enroll <url>      enroll this machine as a device from an invite URL
   device list|revoke  list or revoke enrolled devices (relay host)
-  daemon            run the local daemon (push, redact+sign, stdio MCP)
+  daemon            run the local notifier (relay push → desktop notification)
+  mcp               run the local stdio MCP server — configure THIS in your AI client
   version           print version
   help              show this help
 `)
@@ -354,30 +357,49 @@ func cmdDeviceRevoke(args []string) error {
 	return nil
 }
 
-// cmdDaemon runs the local daemon (arch §6): loads the enroll config + device
-// key and runs until a signal.
-func cmdDaemon(args []string) error {
-	fs := flag.NewFlagSet("daemon", flag.ContinueOnError)
+// loadDaemon parses the -config flag shared by the two local roles and loads the
+// daemon. Logs go to STDERR, never stdout: on the `mcp` path stdout is the MCP
+// channel itself, and a stray log line there corrupts the protocol.
+func loadDaemon(verb string, args []string) (*daemon.Daemon, error) {
+	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "config file path (default ~/.config/askrelay/config.json)")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return nil, err
 	}
 	path := *cfgPath
 	if path == "" {
 		p, _, err := configPaths("")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		path = p
 	}
-	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	d, err := daemon.Load(path, log)
+	return daemon.Load(path, relay.Version, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+}
+
+// cmdDaemon runs the background notifier (arch §6): it holds the relay push
+// socket open and raises a desktop notification when mail arrives.
+func cmdDaemon(args []string) error {
+	d, err := loadDaemon("daemon", args)
 	if err != nil {
 		return err
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	return d.Run(ctx)
+}
+
+// cmdMCP runs the stdio MCP server an AI client spawns (arch §6). It proxies the
+// relay's own tool surface, which is what puts the daemon in the send path —
+// where redaction and signatures are meaningful (T-19 amendment).
+func cmdMCP(args []string) error {
+	d, err := loadDaemon("mcp", args)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	return d.ServeStdio(ctx)
 }
 
 func envOr(key, def string) string {
