@@ -6,8 +6,15 @@ is the reverse proxy's job; the relay listens on localhost by default.
 > Status: the relay core is complete — `/healthz`, enrollment
 > (`POST /enroll/{token}`), the MCP surface (`/mcp`), the embedded OAuth 2.1
 > authorization server (`/oauth/*`, `/.well-known/*`), and the delivery
-> WebSocket (`/ws`) are all live. Release packaging (Docker image, prebuilt
-> binaries) is finalized in WP-14.
+> WebSocket (`/ws`) are all live. Release packaging (published Docker image,
+> prebuilt binaries) is finalized in WP-14; the `Dockerfile` beside this file
+> builds today.
+
+**Docker is the default deploy** (D-25): build the `Dockerfile` here and run it
+on whatever host you like — a Coolify/Dokku-class PaaS terminates TLS for you, so
+the `Caddyfile` below is only needed for the no-container route. Whatever you
+use, give the container **one persistent volume covering both the SQLite file and
+`signing.key`**; losing either loses every enrollment.
 
 ## Fresh-VPS walkthrough → "device enrolled"
 
@@ -32,8 +39,17 @@ Only the binary and a reverse proxy are required.
    # → https://relay.example.com/enroll/<token>
    ```
    Deliver that URL out-of-band (Slack/email — your existing trusted channel).
-5. **Enroll a device** (the colleague's client does this; shown here with curl
-   for the walkthrough): generate an Ed25519 keypair, then
+5. **Enroll a device** — on the colleague's own machine:
+   ```
+   askrelay enroll -name "Marco" "https://relay.example.com/enroll/<token>"
+   ```
+   That writes `~/.config/askrelay/config.json` and the device key, both 0600.
+   **The config file holds a long-lived device credential** — it is a secret at
+   rest, because `askrelay daemon` and `askrelay mcp` authenticate to the relay
+   with it. Back it up like a key, not like a config.
+
+   The raw HTTP call the verb makes, for reference: generate an Ed25519 keypair,
+   then
    ```
    curl -sX POST https://relay.example.com/enroll/<token> \
      -H 'content-type: application/json' \

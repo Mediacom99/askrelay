@@ -44,13 +44,19 @@ and they're on ChatGPT.
   uncommitted work your session can't reach.
 - **Approval in both directions.** Inbound messages are untrusted until the
   recipient approves them; AI-drafted replies are reviewed before they leave.
+  The relay enforces that an approval happened; that it came from the *human* is
+  currently enforced by tool instructions rather than structurally.
   Ongoing exchange? Grant per-thread auto-approval — revocable, and every
   grant-derived action is logged.
 - **Self-hosted.** One Go binary + a SQLite file, speaking MCP over HTTPS with a
   built-in OAuth 2.1 server, so browser clients connect zero-install. Your
-  messages live on your infrastructure — and only briefly: deleted after delivery.
-- **Security by construction.** Signed envelopes, inbound quarantine, no
-  tool-triggering, no auto-fetched links, no ML "guardrail" theater.
+  messages live on your infrastructure, and they are deleted on a short clock
+  (72 h after the last ack, 30 days at the outside — both operator-tunable).
+- **Security by construction.** Inbound quarantine, no tool-triggering, no
+  auto-fetched links, no ML "guardrail" theater. Run the local daemon and your
+  messages are also secret-scanned and Ed25519-signed on your own machine before
+  they leave it; connect a client straight to the relay and delivery is
+  relay-attested instead. Recipients are told which they got, per message.
 
 ## Inbound is data, not instructions
 
@@ -88,25 +94,41 @@ make build
 ./askrelay invite colleague@example.com --db /tmp/askrelay.db --base-url http://127.0.0.1:8080
 ```
 
+Then, on each person's own machine — this is what enables notifications,
+redaction, and signing:
+
+```sh
+./askrelay enroll -name "Alice" "<invite url>"   # writes ~/.config/askrelay (0600)
+./askrelay daemon &                              # push notifications
+claude mcp add askrelay -- /path/to/askrelay mcp # point your AI client at the local server
+```
+
 Connecting claude.ai / ChatGPT / Claude Code, self-hosting behind TLS, and the
 full security model all live at **[docs.askrelay.dev](https://docs.askrelay.dev)**.
 
 ## Status
 
-Early, and honest about it. The relay does the whole cross-person job today;
-what remains is validating each vendor's connector live and packaging releases.
+Early, and honest about it. The relay does the whole cross-person job today; what
+remains is validating each vendor's connector live and packaging releases.
 
-- **Works now** — the relay (`serve`, `invite`, device enrollment); the full
-  approval-gated loop over MCP (`send_message` → spotlighted inbox → approve →
-  deliver → reply); Ed25519-signed envelopes + the two-way gate + revocable
-  per-thread grants; WebSocket delivery with push + ack and ephemeral retention;
-  the full **OAuth 2.1** stack — resource server *and* embedded authorization
-  server (authorize/token with PKCE, DCR + CIMD, JWKS); client-side secret
-  redaction. Covered by a race-enabled test suite and a local dev harness.
-- **Next** — live per-client connector validation (claude.ai / ChatGPT / Claude
-  Code each completing OAuth against a real relay); the Claude Code **daemon**
-  (instant push + in-terminal approvals); human-facing **CLI verbs** (inbox /
-  approve / device / status); packaged **releases** (Docker, GoReleaser, brew).
+- **Works now** — the relay (`serve`, `invite`, `enroll`, `device list|revoke`);
+  the full approval-gated loop over MCP (`send_message` → spotlighted inbox →
+  approve → deliver → reply); the two-way gate + revocable per-thread grants;
+  WebSocket delivery with push and ack; the full **OAuth 2.1** stack — resource
+  server *and* embedded authorization server (authorize/token with PKCE, DCR +
+  CIMD, JWKS). Covered by a race-enabled test suite and a local dev harness.
+- **Works now, if you run the local daemon** — desktop notification the moment
+  mail arrives (`askrelay daemon`); a local stdio MCP server for your AI client
+  (`askrelay mcp`) which is what puts your machine in the send path, so outbound
+  bodies are **secret-redacted** and then **Ed25519-signed** there. The relay
+  verifies each signature and shows recipients `device verified`; without a
+  daemon a message is delivered `relay-attested` and says so. Signature
+  verification happens on the relay, not on the recipient's machine — a
+  recipient trusting that verdict is trusting the relay.
+- **Next** — the daemon's offline outbound queue; live per-client connector
+  validation (claude.ai / ChatGPT / Claude Code each completing OAuth against a
+  real relay); human-facing **CLI verbs** (`inbox`, `approve`, `status`);
+  packaged **releases** (Docker image, prebuilt binaries).
 
 ## Contribute & follow along
 

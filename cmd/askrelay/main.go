@@ -185,7 +185,7 @@ func cmdEnroll(args []string) error {
 	}
 	if inviteURL == "" {
 		if fs.NArg() != 1 {
-			return fmt.Errorf("usage: askrelay enroll <invite-url> [-label name] [-config path] [-force]")
+			return fmt.Errorf("usage: askrelay enroll [-name you] [-label device] [-config path] [-force] <invite-url>")
 		}
 		inviteURL = fs.Arg(0)
 	}

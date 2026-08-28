@@ -42,13 +42,19 @@ the first users; OSS (Apache-2.0 + DCO, no CLA) from day one.
 - Dependencies enter only at the plan §3 pins, only when a WP first imports
   them. `go.mod` now carries the five pins those WPs pulled in (`go-sdk`,
   `modernc.org/sqlite`, `coder/websocket`, `golang-jwt/v5`, `google/uuid`) —
-  all matching §3 exactly. `internal/daemon` is still a `doc.go`-only
-  placeholder citing its architecture sections (WP-09/WP-10); every other
-  package is implemented. `internal/redact` is implemented (WP-11 DONE) but has
-  **no caller outside tests** — it runs client-side and its caller is the
-  daemon, so redaction does not yet happen on any live path. The same is true of
-  `envelope.Sign`/`Verify`: implemented, tested, and unreferenced until WP-09
-  wires the daemon-signed submit. See risk R-12.
+  all matching §3 exactly. Every package is implemented; `internal/daemon` is
+  live through WP-09 ST-6 — listener + desktop notification, the stdio MCP proxy
+  (`askrelay mcp`), redaction, and sign-at-release — with the offline queue
+  (ST-7) and the quality pass (ST-8) outstanding.
+- **R-12 as it now stands.** `internal/redact` and `envelope.Sign`/`Verify` have
+  live callers at last, but only on the **daemon-mediated path** (`askrelay
+  mcp`). A client connected straight to the relay over HTTPS still sends
+  unredacted text and gets relay-attested delivery, because no daemon is in that
+  path to redact or sign — structural, not a gap to close; see the T-19
+  amendment. `store.RevokeDevice` got its CLI in `ca5718c`. So never write
+  "askrelay redacts and signs" flatly: it does when the sender runs the daemon,
+  and recipients are told which attestation each message carries. Signature
+  verification is the **relay's**, never the recipient's (T-21).
 
 ## Standing constraints (full rationale in the decision log)
 
